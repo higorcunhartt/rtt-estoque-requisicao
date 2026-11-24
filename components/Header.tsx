@@ -37,6 +37,10 @@ export function Header() {
             </span>
             <span className="btn sec upd-b">Atualizar</span>
           </button>
+          <div className="who">
+            <span title={user.email}>{user.name}</span>
+            <button className="btn sec" onClick={() => void logout()}>Sair</button>
+          </div>
         </div>
       </div>
     </header>

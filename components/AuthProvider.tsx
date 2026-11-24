@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { createContext, useCallback, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 
-export type User = { id: string; email: string; name: string; role: "admin" | "user"; mustChangePassword: boolean };
+export type User = { id: string; email: string; name: string; role: "admin" | "gestor" | "user"; mustChangePassword: boolean };
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(`/api/auth/${path}`, {

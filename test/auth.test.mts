@@ -40,7 +40,7 @@ const PASS = "frase-longa-segura-42";
 let ipN = 0;
 const newIp = () => `10.0.0.${++ipN}`;
 
-async function addUser(email: string, role: "admin" | "user", mustChange = false, pass = PASS) {
+async function addUser(email: string, role: "admin" | "gestor" | "user", mustChange = false, pass = PASS) {
   await db.query("insert into users (email, name, password_hash, role, must_change_password) values ($1,$2,$3,$4,$5)", [email, email.split("@")[0], await hashPassword(pass), role, mustChange]);
 }
 const req = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
@@ -196,4 +196,49 @@ test("gestão de usuários: só admin, com reautenticação, e nada de se auto-r
   assert.equal(reset.status, 200);
   assert.notEqual((await reset.json()).tempPassword, tempPassword);
   assert.equal((await patch("nao-e-um-id", { action: "reset", confirmPassword: PASS })).status, 404);
+});
+test("gestor de suprimentos: atualiza dados e cria usuários comuns, mas não reseta senha nem mexe em admin", async () => {
+  await addUser("chefe@x.com", "admin");
+  await addUser("suprimentos@x.com", "gestor");
+  await addUser("simples@x.com", "user");
+  const g = await fullLogin("suprimentos@x.com");
+  const adm = (await db.query("select id from users where email = 'chefe@x.com'")).rows[0] as { id: string };
+  const simples = (await db.query("select id from users where email = 'simples@x.com'")).rows[0] as { id: string };
+  const gestorSelf = (await db.query("select id from users where email = 'suprimentos@x.com'")).rows[0] as { id: string };
+
+  // atualiza dados (passa da autorização; corpo inválido => 400) e vê a lista
+  const put = await dados.PUT(new Request("http://localhost/api/dados", { method: "PUT", body: "{}", headers: { "content-type": "application/json", cookie: g } }));
+  assert.equal(put.status, 400);
+  assert.equal((await usuarios.GET(req("GET", "/api/usuarios", undefined, { cookie: g }))).status, 200);
+
+  const post = (body: unknown) => usuarios.POST(req("POST", "/api/usuarios", body, { cookie: g }));
+  const patch = (id: string, body: unknown) => usuarioId.PATCH(req("PATCH", `/api/usuarios/${id}`, body, { cookie: g }), { params: Promise.resolve({ id }) });
+
+  // cria só usuário comum
+  assert.equal((await post({ name: "A", email: "a1@x.com", role: "admin", confirmPassword: PASS })).status, 403);
+  assert.equal((await post({ name: "A", email: "a2@x.com", role: "gestor", confirmPassword: PASS })).status, 403);
+  const ok = await post({ name: "Novo", email: "novo-comum@x.com", role: "user", confirmPassword: PASS });
+  assert.equal(ok.status, 201);
+  assert.equal((await ok.json()).user.role, "user");
+  // recriar um e-mail existente não vira atalho para resetar senha
+  assert.equal((await post({ name: "X", email: "chefe@x.com", role: "user", confirmPassword: PASS })).status, 409);
+
+  // nunca reseta senha, nem de usuário comum
+  assert.equal((await patch(simples.id, { action: "reset", confirmPassword: PASS })).status, 403);
+  assert.equal((await patch(adm.id, { action: "reset", confirmPassword: PASS })).status, 403);
+  // nunca muda papéis
+  assert.equal((await patch(simples.id, { action: "role", role: "admin", confirmPassword: PASS })).status, 403);
+  assert.equal((await patch(gestorSelf.id, { action: "role", role: "admin", confirmPassword: PASS })).status, 403);
+  // não desativa admin; pode desativar/reativar usuário comum
+  assert.equal((await patch(adm.id, { action: "active", active: false, confirmPassword: PASS })).status, 403);
+  assert.equal((await patch(simples.id, { action: "active", active: false, confirmPassword: PASS })).status, 200);
+  assert.equal((await patch(simples.id, { action: "active", active: true, confirmPassword: PASS })).status, 200);
+  assert.equal(((await db.query("select active from users where email = 'chefe@x.com'")).rows[0] as { active: boolean }).active, true);
+});
+
+test("usuário comum continua sem acesso à gestão nem à gravação de dados", async () => {
+  const c = await fullLogin("simples@x.com");
+  assert.equal((await usuarios.GET(req("GET", "/api/usuarios", undefined, { cookie: c }))).status, 403);
+  const put = await dados.PUT(new Request("http://localhost/api/dados", { method: "PUT", body: "{}", headers: { "content-type": "application/json", cookie: c } }));
+  assert.equal(put.status, 403);
 });

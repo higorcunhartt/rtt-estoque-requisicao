@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "./AuthProvider";
 
-type U = { id: string; email: string; name: string; role: "admin" | "user"; active: boolean; mustChangePassword: boolean; createdAt: string };
+type Role = "admin" | "gestor" | "user";
+type U = { id: string; email: string; name: string; role: Role; active: boolean; mustChangePassword: boolean; createdAt: string };
 type Pending = { title: string; run: (confirm: string) => Promise<void> } | null;
 
 async function call<T>(url: string, method: string, body?: unknown): Promise<T> {
@@ -21,7 +22,7 @@ export function Usuarios() {
   const { user: me } = useAuth();
   const [users, setUsers] = useState<U[] | null>(null);
   const [err, setErr] = useState("");
-  const [form, setForm] = useState({ name: "", email: "", role: "user" as "admin" | "user" });
+  const [form, setForm] = useState({ name: "", email: "", role: "user" as Role });
   const [pending, setPending] = useState<Pending>(null);
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -31,9 +32,10 @@ export function Usuarios() {
     try { setUsers((await call<{ users: U[] }>("/api/usuarios", "GET")).users); setErr(""); }
     catch (e) { setErr(e instanceof Error ? e.message : "Falha ao carregar."); }
   }, []);
-  useEffect(() => { if (me.role === "admin") void load(); }, [me.role, load]);
+  useEffect(() => { if (me.role !== "user") void load(); }, [me.role, load]);
 
-  if (me.role !== "admin") return <div className="panel needprj"><h3>Acesso restrito</h3><p className="empty">Só administradores gerenciam usuários.</p></div>;
+  if (me.role === "user") return <div className="panel needprj"><h3>Acesso restrito</h3><p className="empty">Só administradores e o gestor de suprimentos gerenciam usuários.</p></div>;
+  const isAdmin = me.role === "admin";
 
   // Toda ação sensível pede a senha do administrador de novo.
   const ask = (title: string, run: (c: string) => Promise<void>) => { setConfirm(""); setErr(""); setPending({ title, run }); };
@@ -68,9 +70,10 @@ export function Usuarios() {
           <label className="fld"><span>Nome</span><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required maxLength={120} /></label>
           <label className="fld"><span>E-mail corporativo</span><input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></label>
           <label className="fld"><span>Papel</span>
-            <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as "admin" | "user" })}>
+            <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Role })}>
               <option value="user">Usuário (consulta e simula)</option>
-              <option value="admin">Administrador (também atualiza dados e gerencia usuários)</option>
+              {isAdmin && <option value="gestor">Gestor de suprimentos (atualiza dados e cria usuários)</option>}
+              {isAdmin && <option value="admin">Administrador (acesso total)</option>}
             </select></label>
           <button className="btn red">Criar usuário</button>
         </form>
@@ -99,12 +102,17 @@ export function Usuarios() {
                   <tr key={u.id} style={{ cursor: "default" }}>
                     <td className="t"><b>{u.name}</b>{self && <span className="note"> (você)</span>}</td>
                     <td className="t">{u.email}</td>
-                    <td className="t">{u.role === "admin" ? <span className="pill p-red">Administrador</span> : <span className="pill p-gray">Usuário</span>}</td>
+                    <td className="t">{u.role === "admin" ? <span className="pill p-red">Administrador</span> : u.role === "gestor" ? <span className="pill p-blue">Gestor de suprimentos</span> : <span className="pill p-gray">Usuário</span>}</td>
                     <td className="t">{!u.active ? <span className="pill p-gray">Desativado</span> : u.mustChangePassword ? <span className="pill p-amber">Aguardando 1º acesso</span> : <span className="pill p-green">Ativo</span>}</td>
                     <td className="t" style={{ whiteSpace: "nowrap", textAlign: "right" }}>
-                      {!self && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "role", role: u.role === "admin" ? "user" : "admin" }, `${u.role === "admin" ? "Tornar usuário comum" : "Tornar administrador"}: ${u.email}`)}>{u.role === "admin" ? "Tornar usuário" : "Tornar admin"}</button>}{" "}
-                      <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "reset" }, `Redefinir a senha de ${u.email}`)}>Redefinir senha</button>{" "}
-                      {!self && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "active", active: !u.active }, `${u.active ? "Desativar" : "Reativar"} ${u.email}`)}>{u.active ? "Desativar" : "Reativar"}</button>}
+                      {isAdmin && !self && (
+                        <select aria-label={`Papel de ${u.email}`} value={u.role} style={{ padding: "3px 6px", marginRight: 6 }}
+                          onChange={(e) => patch(u, { action: "role", role: e.target.value }, `Mudar o papel de ${u.email} para ${e.target.selectedOptions[0].text}`)}>
+                          <option value="user">Usuário</option><option value="gestor">Gestor de suprimentos</option><option value="admin">Administrador</option>
+                        </select>
+                      )}
+                      {isAdmin && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "reset" }, `Redefinir a senha de ${u.email}`)}>Redefinir senha</button>}{" "}
+                      {!self && (isAdmin || u.role === "user") && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "active", active: !u.active }, `${u.active ? "Desativar" : "Reativar"} ${u.email}`)}>{u.active ? "Desativar" : "Reativar"}</button>}
                     </td>
                   </tr>
                 );

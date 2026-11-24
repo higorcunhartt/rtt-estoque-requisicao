@@ -26,7 +26,7 @@ export function Header() {
         <nav className="tabs" aria-label="Módulos">
           <Link href="/" aria-current={!req && !usr ? "page" : undefined}>Parâmetros de reposição</Link>
           <Link href="/requisicao" aria-current={req ? "page" : undefined}>Requisição com saldo na tela</Link>
-          {user.role === "admin" && <Link href="/usuarios" aria-current={usr ? "page" : undefined}>Usuários</Link>}
+          {user.role !== "user" && <Link href="/usuarios" aria-current={usr ? "page" : undefined}>Usuários</Link>}
         </nav>
         <div className="top-right">
           <button className="upd" onClick={() => setPanelOpen(true)} title="Atualizar os dados">

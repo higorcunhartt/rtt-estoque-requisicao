@@ -11,7 +11,7 @@ const prod = () => process.env.NODE_ENV === "production";
 // Em produção o prefixo __Host- obriga Secure, Path=/ e proíbe Domain: o cookie não vaza para subdomínios.
 const COOKIE = () => (prod() ? "__Host-session" : "session");
 
-export type Role = "admin" | "user";
+export type Role = "admin" | "gestor" | "user"; // gestor = gestor de suprimentos
 export type SessionUser = { id: string; email: string; name: string; role: Role; mustChangePassword: boolean };
 
 function secretKey() {
@@ -80,12 +80,12 @@ export async function requireUser(
 }
 
 /**
- * Quem pode gravar dados: administrador logado OU máquina com token (n8n e agendador).
+ * Quem pode gravar dados: administrador ou gestor de suprimentos logado OU máquina com token (n8n e agendador).
  * O token vem em cabeçalho, nunca em cookie, então não depende da sessão do navegador.
  */
 export async function requireWriter(req: Request): Promise<void> {
   if ((req.headers.get("authorization") || req.headers.get("x-admin-token")) && tokenAuthorized(req)) return;
-  await requireUser(req, { roles: ["admin"] });
+  await requireUser(req, { roles: ["admin", "gestor"] });
 }
 
 export const hashPassword = (p: string) => bcrypt.hash(p, 12);

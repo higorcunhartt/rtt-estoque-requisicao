@@ -15,7 +15,7 @@ const ORIGEM: Record<string, string> = {
 
 export function UpdatePanel() {
   const { panelOpen, setPanelOpen, status, refreshStatus, reloadData, applyDataset, toast } = useApp();
-  const isAdmin = useAuth().user.role === "admin";
+  const isAdmin = useAuth().user.role !== "user"; // administrador ou gestor de suprimentos
   const [files, setFiles] = useState<SlotFiles>({});
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
@@ -120,7 +120,7 @@ export function UpdatePanel() {
         {status?.emAndamento && <p className="pmiss">Há uma atualização em andamento no servidor.</p>}
         {status?.erro && <p className="scerr">Última tentativa falhou: {status.erro}</p>}
 
-        {!isAdmin && <p className="pmiss">Só administradores atualizam os dados. Você pode consultar normalmente.</p>}
+        {!isAdmin && <p className="pmiss">Só administradores e o gestor de suprimentos atualizam os dados. Você pode consultar normalmente.</p>}
 
         <h3>Atualizar do sistema</h3>
         <p className="note" style={{ margin: "0 0 8px" }}>

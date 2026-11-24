@@ -3,7 +3,7 @@ create table if not exists users (
   email text not null unique,
   name text not null,
   password_hash text not null,
-  role text not null default 'user' check (role in ('admin', 'user')),
+  role text not null default 'user' check (role in ('admin', 'gestor', 'user')),
   active boolean not null default true,
   must_change_password boolean not null default false,
   token_version int not null default 0,
@@ -57,3 +57,7 @@ $$;
 drop trigger if exists users_keep_admin on users;
 create trigger users_keep_admin before update on users
   for each row execute function ensure_one_active_admin();
+
+-- Papel "gestor" (gestor de suprimentos): bancos criados antes dele precisam ampliar a restrição.
+alter table users drop constraint if exists users_role_check;
+alter table users add constraint users_role_check check (role in ('admin', 'gestor', 'user'));

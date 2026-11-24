@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { AppProvider, useApp } from "./AppProvider";
+import { AuthGate } from "./AuthProvider";
 import { Header } from "./Header";
 import { UpdatePanel } from "./UpdatePanel";
 
@@ -22,5 +23,5 @@ function Inner({ children }: { children: ReactNode }) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
-  return <AppProvider><Inner>{children}</Inner></AppProvider>;
+  return <AuthGate><AppProvider><Inner>{children}</Inner></AppProvider></AuthGate>;
 }

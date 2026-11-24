@@ -152,3 +152,14 @@ h3{font:600 18px/1.2 var(--cond);margin:22px 0 8px}
 @keyframes pulse{50%{opacity:.35}}
 .tabs a:hover{color:var(--ink)}
 @media (max-width:640px){.logo img{height:40px}.upd small{display:none}.top-right{margin-left:0;width:100%}.upd{flex:1}}
+
+/* login / MFA */
+.center{min-height:100vh;display:grid;place-items:center;padding:16px}
+.authcard{width:100%;max-width:400px;padding:22px}
+.authcard h1{font:600 22px var(--cond);margin:10px 0 14px}
+.auth-logo{height:56px;width:auto}
+.authform{display:flex;flex-direction:column;gap:12px}
+.authform p{margin:0}
+.authrow{display:flex;justify-content:space-between;gap:8px}
+.who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)}
+.who .btn{padding:5px 10px}

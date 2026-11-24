@@ -7,25 +7,34 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.mts",
+    "migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
+    "usuario": "node --env-file-if-exists=.env.local scripts/usuario.mjs"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.1",
     "@netlify/blobs": "^11.1.11",
+    "bcryptjs": "^3.0.3",
+    "jose": "^6.2.18",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.9",
     "next": "16.4.6",
+    "nodemailer": "^10.6.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.6.0",
     "@netlify/functions": "^6.1.2",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
-

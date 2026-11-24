@@ -20,17 +20,6 @@ export function detectSlot(name: string): SlotKey | null {
   return null;
 }
 
-const ADMIN_KEY = "rtt-admin";
-export const getAdminToken = () => {
-  try { return localStorage.getItem(ADMIN_KEY) || ""; } catch { return ""; }
-};
-export const setAdminToken = (v: string) => {
-  try { localStorage.setItem(ADMIN_KEY, v); } catch { /* ignora */ }
-};
-const authHeaders = (): Record<string, string> => {
-  const t = getAdminToken();
-  return t ? { "x-admin-token": t } : {};
-};
 
 async function gzip(text: string): Promise<ArrayBuffer> {
   const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
@@ -42,7 +31,7 @@ export async function publishDataset(ds: Dataset, origem: "excel" | "sistema", d
   const body = await gzip(JSON.stringify(ds));
   const r = await fetch("/api/dados", {
     method: "PUT",
-    headers: { ...authHeaders(), "x-origem": origem, "x-detalhe": encodeURIComponent(detalhe), "content-type": "application/octet-stream" },
+    headers: { "x-origem": origem, "x-detalhe": encodeURIComponent(detalhe), "content-type": "application/octet-stream" },
     body,
   });
   const j = await r.json().catch(() => ({}));
@@ -51,7 +40,7 @@ export async function publishDataset(ds: Dataset, origem: "excel" | "sistema", d
 
 /** Aciona a busca no sistema (consulta do ERP). */
 export async function triggerSystemRefresh(): Promise<{ emAndamento?: boolean }> {
-  const r = await fetch("/api/atualizar", { method: "POST", headers: authHeaders() });
+  const r = await fetch("/api/atualizar", { method: "POST" });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.erro || `Falha ao atualizar (HTTP ${r.status}).`);
   return j;

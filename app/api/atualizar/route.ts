@@ -1,14 +1,15 @@
-import { authorized } from "@/lib/auth";
+import { handle, json } from "@/lib/server/http";
+import { requireWriter } from "@/lib/server/session";
 import { refreshFromSource, sourceConfigured } from "@/lib/refresh";
 import { readStatus, writeStatus } from "@/lib/store";
 
 export const maxDuration = 60;
 
-/** Botão "Atualizar do sistema": busca os dados na fonte configurada (SOURCE_URL). */
-export async function POST(req: Request) {
-  if (!authorized(req)) return Response.json({ erro: "Não autorizado." }, { status: 401 });
+/** Botão "Atualizar do sistema": busca os dados na fonte configurada (SOURCE_URL). Só administrador logado ou token. */
+export const POST = handle(async (req: Request) => {
+  await requireWriter(req);
   if (!sourceConfigured()) {
-    return Response.json({ erro: "A fonte de dados do sistema ainda não foi configurada (SOURCE_URL). Use a atualização por Excel enquanto isso." }, { status: 409 });
+    return json({ erro: "A fonte de dados do sistema ainda não foi configurada (SOURCE_URL). Use a atualização por Excel enquanto isso." }, 409);
   }
   // Na Netlify o trabalho roda em função em segundo plano (até 15 min); o painel acompanha pelo /api/status.
   const bg = process.env.URL && process.env.NETLIFY && process.env.CRON_SECRET;
@@ -19,11 +20,11 @@ export async function POST(req: Request) {
       method: "POST",
       headers: { authorization: `Bearer ${process.env.CRON_SECRET}`, "x-origem": "sistema" },
     });
-    return Response.json({ emAndamento: true }, { status: 202 });
+    return json({ emAndamento: true }, 202);
   }
   try {
-    return Response.json(await refreshFromSource("sistema"));
+    return json(await refreshFromSource("sistema"));
   } catch (e) {
-    return Response.json({ erro: e instanceof Error ? e.message : "Falha ao atualizar." }, { status: 502 });
+    return json({ erro: e instanceof Error ? e.message : "Falha ao atualizar." }, 502);
   }
-}
+});

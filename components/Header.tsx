@@ -4,11 +4,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useApp } from "./AppProvider";
+import { useAuth } from "./AuthProvider";
 import { fmtDateTime } from "@/lib/format";
 
 export function Header() {
   const path = usePathname();
   const { ds, status, setPanelOpen } = useApp();
+  const { user, logout } = useAuth();
   const req = path.startsWith("/requisicao");
   return (
     <header className="top">

@@ -12,7 +12,7 @@ export interface StatusInfo {
   detalhe?: string;
   erro?: string;
   emAndamento?: boolean;
-  config?: { sistema: boolean; protegido: boolean; agenda: string };
+  config?: { sistema: boolean; agenda: string };
 }
 
 /** Estado do formulário de requisição (mantido ao trocar de aba). */

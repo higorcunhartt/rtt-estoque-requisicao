@@ -47,3 +47,5 @@ next-env.d.ts
 
 # arquivo grande de exemplo gerado por scripts/validar-etl.ts
 /scripts/spec-exemplo.json
+
+!.env.example

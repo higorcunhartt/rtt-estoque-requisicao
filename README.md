@@ -30,14 +30,26 @@ npm run dev      # http://localhost:3000
 
 Variáveis de ambiente: copie `.env.example` para `.env.local`.
 
+## Login com MFA
+
+Toda a aplicação exige login: **e-mail + senha + código de 6 dígitos enviado por e-mail**. Os dados (`/api/dados`, `/api/status`) só saem do servidor com sessão válida.
+
+- **Usuários:** banco PostgreSQL próprio (Neon). `npm run migrate` cria as tabelas e o primeiro administrador (`ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD`). Outros usuários: `USER_PASSWORD=... npm run usuario -- email@rttshop.com.br "Nome" user` (ou `admin`). A senha provisória vale só até o primeiro acesso, quando o sistema exige a troca.
+- **Papéis:** `user` consulta e simula requisições; `admin` também atualiza os dados (Excel e botão do sistema).
+- **Máquinas** (n8n, agendador): continuam usando `ADMIN_TOKEN`/`CRON_SECRET` em cabeçalho, sem sessão.
+- **Segurança:** senhas com bcrypt (custo 12); sessão em cookie `HttpOnly`, `Secure`, `SameSite=Strict` (prefixo `__Host-` em produção), 8 h, revogável no servidor (logout, troca de senha, desativação); código MFA de uso único, 10 min, 5 tentativas, guardado só como HMAC; limite de tentativas por IP, por conta e por código; respostas iguais para conta inexistente; verificação de `Origin` contra CSRF; trilha de auditoria (`audit_log`).
+- **Não há** "esqueci minha senha" nem tela de administração de usuários: o administrador do banco cria e redefine pelo comando `usuario`.
+- **Local sem e-mail:** com `npm run dev` e sem SMTP, o código MFA aparece no terminal.
+- Testes: `npm test` (login, MFA, revogação, limites e proteção das rotas, com PGlite em memória).
+
 ## Publicando (Netlify + GitHub)
 
 Mesmo padrão do sistema de inventário: o site é ligado a este repositório e **cada push na `main` publica automaticamente** (build `npm run build`, definido em `netlify.toml`). O CI em `.github/workflows/ci.yml` roda tipos, lint e build.
 
 - **Repositório privado:** `data/seed.json` contém dados internos da empresa.
-- **Variáveis** (Netlify → Site configuration → Environment variables): `ADMIN_TOKEN`, `CRON_SECRET` e, quando o consultor entregar a consulta, `SOURCE_URL` (e `SOURCE_TOKEN`, se houver). Mudança de variável só vale no próximo deploy. Sem `ADMIN_TOKEN` nem `CRON_SECRET`, as gravações são recusadas em produção.
+- **Variáveis** (Netlify → Site configuration → Environment variables): `DATABASE_URL`, `JWT_SECRET`, `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`MAIL_FROM` (login), `ADMIN_TOKEN`, `CRON_SECRET` e, quando o consultor entregar a consulta, `SOURCE_URL` (e `SOURCE_TOKEN`, se houver). Mudança de variável só vale no próximo deploy. Sem `ADMIN_TOKEN` nem `CRON_SECRET`, as gravações são recusadas em produção.
 - **Créditos:** cada deploy de produção consome créditos; junte mudanças em um push só e desligue deploys de preview e de branch (*Build & deploy → Continuous deployment*).
-- **Acesso ao site:** a Netlify não protege o site por padrão. Defina senha ou login Microsoft Entra antes de publicar dados reais.
+- **Acesso ao site:** protegido pelo login com MFA descrito acima.
 
 ## Estrutura
 

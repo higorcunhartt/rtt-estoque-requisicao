@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./AppProvider";
+import { useAuth } from "./AuthProvider";
 import { fmtDateTime, fmtSize } from "@/lib/format";
-import { SLOTS, detectSlot, getAdminToken, processExcel, publishDataset, setAdminToken, triggerSystemRefresh, type SlotFiles, type SlotKey } from "@/lib/client";
+import { SLOTS, detectSlot, processExcel, publishDataset, triggerSystemRefresh, type SlotFiles, type SlotKey } from "@/lib/client";
 
 const ORIGEM: Record<string, string> = {
   seed: "dados iniciais (HTML original)",
@@ -14,14 +15,13 @@ const ORIGEM: Record<string, string> = {
 
 export function UpdatePanel() {
   const { panelOpen, setPanelOpen, status, refreshStatus, reloadData, applyDataset, toast } = useApp();
+  const isAdmin = useAuth().user.role === "admin";
   const [files, setFiles] = useState<SlotFiles>({});
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   const [publish, setPublish] = useState(true);
-  const [token, setToken] = useState("");
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => { setToken(getAdminToken()); }, []);
   useEffect(() => {
     if (!panelOpen) return;
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") setPanelOpen(false); };
@@ -85,7 +85,7 @@ export function UpdatePanel() {
       setBusy("Preparando…");
       const ds = await processExcel(files, setBusy);
       applyDataset(ds);
-      if (publish) {
+      if (publish && isAdmin) {
         setBusy("Publicando para todos os usuários…");
         await publishDataset(ds, "excel", Object.values(files).map((f) => f!.name).join("; "));
         await refreshStatus();
@@ -120,12 +120,7 @@ export function UpdatePanel() {
         {status?.emAndamento && <p className="pmiss">Há uma atualização em andamento no servidor.</p>}
         {status?.erro && <p className="scerr">Última tentativa falhou: {status.erro}</p>}
 
-        {cfg?.protegido && (
-          <label className="fld" style={{ marginTop: 14 }}>
-            <span>Senha de atualização</span>
-            <input type="password" value={token} autoComplete="off" onChange={(e) => { setToken(e.target.value); setAdminToken(e.target.value); }} placeholder="Necessária para atualizar" />
-          </label>
-        )}
+        {!isAdmin && <p className="pmiss">Só administradores atualizam os dados. Você pode consultar normalmente.</p>}
 
         <h3>Atualizar do sistema</h3>
         <p className="note" style={{ margin: "0 0 8px" }}>
@@ -133,7 +128,7 @@ export function UpdatePanel() {
             ? "Busca agora os dados atuais do Protheus (consulta ao banco)."
             : "A fonte do sistema ainda não está configurada (variável SOURCE_URL). Enquanto isso, use o Excel abaixo."}
         </p>
-        <button className="btn red" onClick={fromSystem} disabled={!!busy || !cfg?.sistema}>Atualizar agora do sistema</button>
+        <button className="btn red" onClick={fromSystem} disabled={!!busy || !cfg?.sistema || !isAdmin}>Atualizar agora do sistema</button>
 
         <h3>Atualizar por planilhas Excel</h3>
         <div
@@ -161,7 +156,7 @@ export function UpdatePanel() {
           })}
         </ul>
         <label style={{ display: "flex", gap: 8, alignItems: "center", margin: "12px 0" }}>
-          <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} />
+          <input type="checkbox" checked={publish && isAdmin} disabled={!isAdmin} onChange={(e) => setPublish(e.target.checked)} />
           <span>Publicar para todos os usuários <span className="note">(desmarque para testar só neste navegador)</span></span>
         </label>
         <button className="btn" onClick={fromExcel} disabled={!!busy || missing.length > 0}>Processar planilhas e atualizar</button>

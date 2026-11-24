@@ -1,0 +1,570 @@
+<script>
+"use strict";
+const D=JSON.parse(document.getElementById("data").textContent);
+const MONTHS=D.meta.months, N=MONTHS.length, BASE=new Date("2026-11-03T12:00:00");
+const MN=["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const S=Object.assign({win:12,cobm:3,abat:1,es:15,trig:1},(()=>{try{return JSON.parse(localStorage.getItem("rtt-param2")||"{}")}catch(e){return{}}})());
+if(![6,12,22].includes(S.win))S.win=12; if(![1,2,3,4,6].includes(S.cobm))S.cobm=3; if(![0,1].includes(S.abat))S.abat=1; if(![0,15,30,-1].includes(S.es))S.es=15; if(![0,1].includes(S.trig))S.trig=1;
+const nf=new Intl.NumberFormat("pt-BR",{maximumFractionDigits:1});
+const nf0=new Intl.NumberFormat("pt-BR",{maximumFractionDigits:0});
+const brl=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
+const brl2=new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:2,maximumFractionDigits:2});
+const fmt=v=>v==null?"—":nf.format(v), fmt0=v=>v==null?"—":nf0.format(v);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dbr=s=>{if(!s||s.startsWith("1900"))return"—";const[y,m,d]=s.split("-");return`${d}/${m}/${y}`};
+const days=s=>Math.round((new Date(s+"T12:00:00")-BASE)/864e5);
+const mes=n=>n===1?"1 mês":n+" meses";
+document.getElementById("basep").textContent="Dados do Protheus extraídos em "+D.meta.base;
+
+// ---------- índices
+const ALM=D.alm.map((a,i)=>({i,f:a[0],l:a[1],n:a[2]}));
+const PROD=D.prod.map((p,i)=>({i,c:p[0],d:p[1],u:p[2],g:p[3],t:p[4]}));
+const ROWS=D.rows.map(r=>({a:r[0],p:r[1],saldo:r[2],vatu:r[3],cm:r[4],dem:r[5]}));
+const rowsByProd=new Map(), rowAt=new Map();
+for(const r of ROWS){(rowsByProd.get(r.p)||rowsByProd.set(r.p,[]).get(r.p)).push(r);rowAt.set(r.a+"|"+r.p,r)}
+const pcSum=new Map(), scSum=new Map();
+for(const[p,list]of Object.entries(D.pcs))for(const x of list){const k=p+"|"+x[0]+"|"+x[1];pcSum.set(k,(pcSum.get(k)||0)+x[4])}
+for(const[p,list]of Object.entries(D.scs))for(const x of list){const k=p+"|"+x[0]+"|"+x[1];scSum.set(k,(scSum.get(k)||0)+x[4])}
+const FILIAIS=[...new Set(ALM.map(a=>a.f))].sort();
+const almLabel=a=>`${a.f} / ${a.l}${a.n?" – "+a.n:""}`;
+const PRJ=D.proj.map((p,i)=>({i,c:p[0],n:p[1],locs:p[2].map(x=>({f:x[0],l:x[1],k:x[2]})),tot:p[3]}));
+const prjBy=new Map(PRJ.map(p=>[p.c,p]));
+let PJ=(()=>{try{return localStorage.getItem("rtt-prj")||""}catch(e){return""}})();if(!prjBy.has(PJ))PJ="";
+const curPrj=()=>prjBy.get(PJ)||null;
+const prjName=c=>(prjBy.get(c)||{n:c||"—"}).n;
+const prjFiliais=()=>{const p=curPrj();if(!p)return[];const m=new Map();for(const x of p.locs)m.set(x.f,(m.get(x.f)||0)+x.k);return[...m.entries()].sort((a,b)=>b[1]-a[1]).map(e=>e[0])};
+const prjAlm=()=>{const p=curPrj();return new Set(p?p.locs.filter(x=>x.l!=="0000").map(x=>x.f+"|"+x.l):[])};
+const pjSel=document.getElementById("pj");
+pjSel.innerHTML='<option value="">Selecione o projeto</option>'+PRJ.map(p=>`<option value="${esc(p.c)}">${esc(p.n)}</option>`).join("");
+pjSel.value=PJ;
+const needPrj=what=>`<div class="panel needprj"><h3>Informe o projeto</h3><p class="empty" style="margin:0">Escolha o projeto no topo da página para ver ${what}. Filiais e armazéns passam a ser os usados pelo projeto nas SCs.</p></div>`;
+function leadTime(p,f){
+  const g=PROD[p].g;
+  let x=D.ltpf[p+"|"+f]; if(x&&x[1]>=2)return{d:x[0],n:x[1],src:"produto nesta filial"};
+  x=D.ltp[p]; if(x)return{d:x[0],n:x[1],src:"produto, todas as filiais"};
+  x=D.ltg[g]; if(x)return{d:x[0],n:x[1],src:"grupo "+g};
+  return{d:D.meta.ltglob,n:null,src:"média geral"};
+}
+
+// ---------- cálculo: ponto de pedido = CMD × lead time + estoque de segurança
+const ZSS=1.65;
+const esLabel=()=>S.es<0?"estatístico, 95%":S.es===0?"sem estoque de segurança":`${S.es} dias de consumo`;
+function base(r){
+  const a=ALM[r.a],w=S.win,win=r.dem.slice(N-w),tot=win.reduce((s,x)=>s+x,0),cmm=tot/w,cmd=cmm/30;
+  const sd=Math.sqrt(win.reduce((s,x)=>s+(x-cmm)**2,0)/w), lt=leadTime(r.p,a.f);
+  const es=cmm===0?0:Math.ceil(S.es<0?ZSS*sd*Math.sqrt(lt.d/30):cmd*S.es);
+  const pp=cmm===0?0:Math.ceil(cmd*lt.d+es), mx=cmm===0?0:Math.ceil(pp+cmd*S.cobm*30);
+  return{tot,cmm,cmd,sd,lt,es,pp,mx,freq:win.filter(x=>x>0).length};
+}
+function othersOf(r){
+  const f=ALM[r.a].f;
+  return(rowsByProd.get(r.p)||[]).filter(o=>o.a!==r.a&&ALM[o.a].f===f&&o.saldo>0).map(o=>{const b=base(o);return{a:ALM[o.a],saldo:o.saldo,cmm:b.cmm,need:b.mx,disp:Math.max(0,o.saldo-b.mx)}}).sort((a,b)=>b.disp-a.disp);
+}
+function calc(r){
+  const a=ALM[r.a],P=PROD[r.p],b=base(r);
+  const pc=pcSum.get(r.p+"|"+a.f+"|"+a.l)||0, sc=scSum.get(r.p+"|"+a.f+"|"+a.l)||0;
+  const oth=othersOf(r), othSaldo=oth.reduce((s,o)=>s+o.saldo,0), othDisp=oth.reduce((s,o)=>s+o.disp,0);
+  const abat=S.abat?pc+sc:0, pos=r.saldo+othDisp+abat;
+  const hit=pos<=b.pp, prev=b.cmm===0?0:(S.trig&&!hit)?0:Math.max(0,Math.ceil(b.mx-pos-1e-9));
+  const cobAt=b.cmm>0?r.saldo/b.cmm:null;
+  const st=b.cmm===0?(r.saldo>0?"parado":"semcons"):prev>0?"comprar":r.saldo>b.mx?"excesso":"coberto";
+  const v=st==="comprar"?prev*r.cm:st==="excesso"?(r.saldo-b.mx)*r.cm:r.vatu;
+  return{r,a,P,...b,pc,sc,oth,othSaldo,othDisp,abat,pos,hit,prev,cobAt,st,v,val:b.tot*r.cm/S.win*12,abc:""};
+}
+const ST={comprar:{l:"Necessidade de compra",c:"p-red",dot:"var(--red)",vl:"necessidade prevista"},
+ coberto:{l:"Coberto pelo estoque",c:"p-green",dot:"var(--green)",vl:"em estoque"},
+ excesso:{l:"Acima do máximo",c:"p-amber",dot:"var(--amber)",vl:"acima do estoque máximo"},
+ parado:{l:"Sem consumo, com saldo",c:"p-blue",dot:"var(--blue)",vl:"parado em estoque"},
+ semcons:{l:"Sem consumo, sem saldo",c:"p-gray",dot:"var(--ink3)",vl:""}};
+let RES=[];
+function recompute(){
+  RES=ROWS.map(calc);
+  const byA=new Map();
+  for(const x of RES){if(x.val>0)(byA.get(x.r.a)||byA.set(x.r.a,[]).get(x.r.a)).push(x)}
+  for(const list of byA.values()){list.sort((a,b)=>b.val-a.val);const T=list.reduce((s,x)=>s+x.val,0);let c=0;for(const x of list){c+=x.val;x.abc=c/T<=0.8?"A":c/T<=0.95?"B":"C"}}
+}
+
+// ---------- rotas e política
+function route(){
+  document.getElementById("drawerHost").innerHTML="";
+  const h=location.hash.slice(1)||"parametros", v=h==="requisicao"?"requisicao":"parametros";
+  for(const n of["parametros","requisicao"]){document.getElementById("v-"+n).hidden=n!==v;const t=document.getElementById("tab-"+n);if(n===v)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current")}
+  if(v==="requisicao")renderReq();
+}
+addEventListener("hashchange",route);
+function syncSeg(){document.querySelectorAll(".seg[data-set]").forEach(s=>s.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.v===S[s.dataset.set]))))}
+document.querySelectorAll(".seg[data-set]").forEach(s=>s.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;S[s.dataset.set]=+b.dataset.v;try{localStorage.setItem("rtt-param2",JSON.stringify(S))}catch(e){}syncSeg();recompute();PG=0;renderParams();if(!document.getElementById("v-requisicao").hidden)renderReq()}));
+const policy=()=>`consumo médio de ${mes(S.win)}; estoque de segurança ${esLabel()}; cobertura de ${mes(S.cobm)} após o ponto de pedido; ${S.abat?"abatendo":"sem abater"} PCs e SCs abertos; ${S.trig?"compra só ao atingir o ponto de pedido":"compra sempre que abaixo do máximo"}`;
+
+// ---------- parâmetros
+const F={f:"",a:"",g:"",abc:"",q:"",st:""};let SORT={k:"prio",dir:1},PG=0;const PS=50;
+const ff=document.getElementById("ff"),fa=document.getElementById("fa"),fg=document.getElementById("fg"),fq=document.getElementById("fq"),fabc=document.getElementById("fabc");
+function fillFF(){ff.innerHTML='<option value="">Todas do projeto</option>'+prjFiliais().map(f=>`<option>${f}</option>`).join("");ff.value=F.f}
+fillFF();
+function fillAlm(){const pa=prjAlm();fa.innerHTML='<option value="">Todos do projeto</option>'+ALM.filter(a=>pa.has(a.f+"|"+a.l)&&(!F.f||a.f===F.f)).map(a=>`<option value="${a.i}">${esc(almLabel(a))}</option>`).join("")}
+fillAlm();
+const grpUsed=[...new Set(ROWS.map(r=>PROD[r.p].g))].sort();
+fg.innerHTML='<option value="">Todos</option>'+grpUsed.map(g=>`<option value="${esc(g)}">${esc(g)} – ${esc(D.grp[g]||"")}</option>`).join("");
+ff.onchange=()=>{F.f=ff.value;F.a="";fillAlm();PG=0;renderParams()};
+fa.onchange=()=>{F.a=fa.value;PG=0;renderParams()};
+fg.onchange=()=>{F.g=fg.value;PG=0;renderParams()};
+fabc.onchange=()=>{F.abc=fabc.value;PG=0;renderParams()};
+let qt;fq.oninput=()=>{clearTimeout(qt);qt=setTimeout(()=>{F.q=fq.value.trim().toUpperCase();PG=0;renderParams()},200)};
+const PRIO={comprar:0,excesso:1,coberto:2,parado:3,semcons:4};
+const cols=()=>[["prod","Produto","t"],["alm","Almox.","t"],["abc","ABC"],["freq","Meses c/ consumo"],["cmm","Consumo/mês"],["lt","Lead time (d)"],["es","Est. segurança"],["pp","Ponto de pedido"],["mx","Máximo"],["saldo","Saldo almox."],["oth","Disp. outros arm."],["pcsc","PC + SC"],["prev","Necessidade prevista"],["prio","Situação","t"]];
+const sortVal={prod:x=>x.P.c,alm:x=>x.a.f+x.a.l,abc:x=>x.abc||"Z",freq:x=>x.freq,cmm:x=>x.cmm,lt:x=>x.lt.d,es:x=>x.es,pp:x=>x.pp,mx:x=>x.mx,saldo:x=>x.r.saldo,oth:x=>x.othDisp,pcsc:x=>x.pc+x.sc,prev:x=>x.prev,prio:x=>PRIO[x.st]*1e12-x.v};
+function filtered(ignoreSt){if(!curPrj())return[];const pa=prjAlm();return RES.filter(x=>pa.has(x.a.f+"|"+x.a.l)&&(!F.f||x.a.f===F.f)&&(!F.a||x.r.a==F.a)&&(!F.g||x.P.g===F.g)&&(!F.abc||x.abc===F.abc)&&(!F.q||x.P.c.includes(F.q)||x.P.d.toUpperCase().includes(F.q))&&(ignoreSt||!F.st||x.st===F.st))}
+function renderParams(){
+  if(!curPrj()){document.getElementById("statusbar").innerHTML="";document.getElementById("ptab").tHead.innerHTML="";document.getElementById("ptab").tBodies[0].innerHTML=`<tr><td class="t" style="white-space:normal;padding:28px 16px;text-align:center;cursor:default"><b style="font:600 18px var(--cond)">Informe o projeto</b><br><span class="note">Escolha o projeto nos filtros acima para ver a necessidade prevista dos almoxarifados que o atendem.</span></td></tr>`;document.getElementById("pinfo").textContent="";document.getElementById("pprev").disabled=document.getElementById("pnext").disabled=true;return}
+  const base=filtered(true),agg={};for(const k in ST)agg[k]={n:0,v:0};
+  for(const x of base){agg[x.st].n++;agg[x.st].v+=x.v}
+  document.getElementById("statusbar").innerHTML=Object.entries(ST).map(([k,s])=>`<button class="st" data-st="${k}" aria-pressed="${F.st===k}"><div class="n">${fmt0(agg[k].n)}</div><div class="l"><span class="dot" style="background:${s.dot}"></span>${s.l}</div><div class="v">${s.vl?brl.format(agg[k].v)+" "+s.vl:"&nbsp;"}</div></button>`).join("");
+  const list=F.st?base.filter(x=>x.st===F.st):base;
+  const fn=sortVal[SORT.k];list.sort((a,b)=>{const A=fn(a),B=fn(b);return(A<B?-1:A>B?1:0)*SORT.dir});
+  const pages=Math.max(1,Math.ceil(list.length/PS));PG=Math.min(PG,pages-1);
+  const tab=document.getElementById("ptab");
+  tab.tHead.innerHTML="<tr>"+cols().map(([k,l,c])=>`<th class="${c||""}" data-k="${k}" aria-sort="${SORT.k===k?(SORT.dir>0?"ascending":"descending"):"none"}">${l}${SORT.k===k?(SORT.dir>0?" ▲":" ▼"):""}</th>`).join("")+"</tr>";
+  tab.tBodies[0].innerHTML=list.slice(PG*PS,PG*PS+PS).map(x=>`<tr data-i="${RES.indexOf(x)}" tabindex="0">
+   <td class="t"><b>${esc(x.P.c)}</b><span class="d">${esc(x.P.d)}</span></td><td class="t">${x.a.f} / ${x.a.l}</td><td>${x.abc||"—"}</td><td>${x.freq}/${S.win}</td>
+   <td>${fmt(x.cmm)}</td><td>${fmt0(x.lt.d)}</td><td>${x.cmm?fmt0(x.es):"—"}</td><td>${x.cmm?fmt0(x.pp):"—"}</td><td>${x.cmm?fmt0(x.mx):"—"}</td><td>${fmt(x.r.saldo)}</td><td>${x.othDisp?fmt(x.othDisp):"—"}</td><td>${x.pc+x.sc?fmt(x.pc+x.sc):"—"}</td>
+   <td>${x.prev?"<b>"+fmt0(x.prev)+"</b>":"0"}</td>
+   <td class="t"><span class="pill ${ST[x.st].c}">${ST[x.st].l}</span></td></tr>`).join("")||`<tr><td class="t" colspan="14">Nenhum item com esses filtros. Limpe a busca ou escolha outra filial.</td></tr>`;
+  document.getElementById("pinfo").textContent=`${fmt0(list.length)} itens, página ${PG+1} de ${pages}`;
+  document.getElementById("pprev").disabled=PG===0;document.getElementById("pnext").disabled=PG>=pages-1;
+}
+document.getElementById("statusbar").onclick=e=>{const b=e.target.closest(".st");if(!b)return;F.st=F.st===b.dataset.st?"":b.dataset.st;PG=0;renderParams()};
+document.getElementById("ptab").tHead.onclick=e=>{const th=e.target.closest("th");if(!th)return;const k=th.dataset.k;SORT=SORT.k===k?{k,dir:-SORT.dir}:{k,dir:["prod","alm","abc","prio"].includes(k)?1:-1};renderParams()};
+const openRow=e=>{const tr=e.target.closest("tr[data-i]");if(tr)openDrawer(RES[+tr.dataset.i])};
+document.getElementById("ptab").tBodies[0].onclick=openRow;
+document.getElementById("ptab").tBodies[0].onkeydown=e=>{if(e.key==="Enter")openRow(e)};
+document.getElementById("pprev").onclick=()=>{PG--;renderParams()};document.getElementById("pnext").onclick=()=>{PG++;renderParams()};
+
+// ---------- régua: posição contra ponto de pedido e máximo
+function ruler({saldo,oth,pc,sc,pp,mx,q}){
+  const W=760,H=100,y=34,h=22,tot=saldo+oth+pc+sc,max=Math.max(tot+(q||0),mx||0,1)*1.08,X=v=>Math.round(v/max*W*1000)/1000;
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Saldo ${fmt(saldo)}, disponível em outros armazéns ${fmt(oth)}, pedidos ${fmt(pc)}, SCs ${fmt(sc)}, ponto de pedido ${fmt0(pp)}, máximo ${fmt0(mx)}${q?", compra solicitada "+fmt(q):""}">
+  <defs><pattern id="hp" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--gray-soft)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--hatch)" stroke-width="3"/></pattern></defs>
+  <rect x="0" y="${y}" width="${W}" height="${h}" fill="var(--wash2)" rx="2"/>`;
+  let x0=0;const seg=(v,fill)=>{if(v>0){s+=`<rect x="${x0}" y="${y}" width="${X(v)}" height="${h}" fill="${fill}"/>`;x0+=X(v)}};
+  seg(saldo,"var(--ink)");seg(oth,"var(--green)");seg(pc,"var(--blue)");seg(sc,"url(#hp)");
+  if(q>0)s+=`<rect x="${x0+1}" y="${y+1}" width="${Math.max(X(q)-2,1)}" height="${h-2}" fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="5 3"/><text x="${Math.min(Math.max(x0+X(q)/2,70),W-70)}" y="${H-4}" text-anchor="middle" font-size="12" font-family="Barlow,Arial" fill="var(--amber)">Compra solicitada ${fmt(q)}</text>`;
+  const mk=(v,lab,col,up)=>{const x=Math.min(X(v),W-1),an=x>W-110?"end":x<80?"start":"middle";return`<line x1="${x}" x2="${x}" y1="${y-8}" y2="${y+h+8}" stroke="${col}" stroke-width="2"/><text x="${x}" y="${up?y-13:y+h+21}" text-anchor="${an}" font-size="12.5" font-family="Barlow,Arial" fill="${col}">${lab}</text>`};
+  if(mx>0){s+=mk(pp,"Ponto de pedido "+fmt0(pp),"var(--red)",true);s+=mk(mx,"Máximo "+fmt0(mx),"var(--amber)",X(mx)-X(pp)>=170)}
+  return s+"</svg>";
+}
+const legend=`<div class="legend"><span><i style="background:var(--ink)"></i>Saldo do almoxarifado</span><span><i style="background:var(--green)"></i>Disponível em outros armazéns da filial</span><span><i style="background:var(--blue)"></i>PC aprovado a caminho</span><span><i style="background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,var(--gray-soft) 2px 5px)"></i>SC aprovada sem pedido</span></div>`;
+function memo(x){
+  const othTxt=x.oth.length?x.oth.map(o=>`arm. ${o.a.l}: saldo ${fmt(o.saldo)} − máximo próprio ${fmt0(o.need)} = ${fmt(o.disp)}`).join("; "):"sem saldo nos outros armazéns";
+  const cmd2=new Intl.NumberFormat("pt-BR",{maximumFractionDigits:2}).format(x.cmd);
+  const esF=x.cmm===0?"sem consumo":S.es<0?`${nf.format(ZSS)} × desvio ${fmt(x.sd)} × √(${fmt0(x.lt.d)}/30)`:S.es===0?"política sem estoque de segurança":`${cmd2} × ${S.es} dias`;
+  return[["Consumo médio mensal",`${fmt(x.tot)} recebidos em ${mes(S.win)} ÷ ${S.win}`,fmt(x.cmm)],
+  ["Consumo médio diário (CMD)",`${fmt(x.cmm)} ÷ 30`,cmd2],
+  ["Lead time",`mediana ${x.lt.n?`de ${x.lt.n} recebimentos, `:""}${x.lt.src}`,fmt0(x.lt.d)+" d"],
+  [`Estoque de segurança (${esLabel()})`,esF,fmt0(x.es)],
+  ["Ponto de pedido",`CMD × lead time + estoque de segurança = ${cmd2} × ${fmt0(x.lt.d)} + ${fmt0(x.es)}`,fmt0(x.pp)],
+  ["Estoque máximo",`ponto de pedido + CMD × ${S.cobm*30} dias de cobertura = ${fmt0(x.pp)} + ${cmd2} × ${S.cobm*30}`,fmt0(x.mx)],
+  ["Posição",`saldo ${fmt(x.r.saldo)} + disponível em outros armazéns ${fmt(x.othDisp)}${S.abat?` + PCs ${fmt(x.pc)} + SCs ${fmt(x.sc)}`:" (PCs e SCs não abatidos)"}. Outros armazéns: ${othTxt}`,fmt(x.pos)],
+  ["Necessidade prevista",x.cmm===0?"sem consumo, sem sugestão":x.hit||!S.trig?`posição ${x.hit?"≤":">"} ponto de pedido: máximo ${fmt0(x.mx)} − posição ${fmt(x.pos)}`:`posição ${fmt(x.pos)} acima do ponto de pedido ${fmt0(x.pp)}: ainda não é hora de comprar`,fmt0(x.prev)]];
+}
+function memoTable(x){
+  const r=memo(x),hl=i=>i===r.length-1||i===4;
+  return`<table class="calc"><tbody>${r.map((z,i)=>`<tr${hl(i)?' style="background:var(--wash)"':""}><td>${hl(i)?"<b>"+z[0]+"</b>":z[0]}</td><td class="f">${esc(z[1])}</td><td class="r">${z[2]}</td></tr>`).join("")}</tbody></table>
+  ${x.cmm===0?`<p class="pmiss">Sem recebimento na janela de ${mes(S.win)}: sem consumo não há ponto de pedido nem necessidade prevista. Qualquer compra deste item exige aprovação especial.</p>`:""}`;
+}
+function bars(dem){
+  const w=S.win,d=dem,W=600,H=130,bw=W/N,max=Math.max(...d,1);
+  return`<svg viewBox="0 0 ${W} ${H+20}" role="img" aria-label="Quantidade recebida por mês">${d.map((v,i)=>{const h=v/max*H,inW=i>=N-w;const m=MONTHS[i].split("-");return`<rect x="${i*bw+6}" y="${H-h}" width="${bw-12}" height="${Math.max(h,v>0?2:0)}" fill="${inW?"var(--ink)":"var(--hatch)"}" rx="2"><title>${MN[+m[1]-1]}/${m[0].slice(2)}: ${fmt(v)}</title></rect><text x="${i*bw+bw/2}" y="${H+15}" text-anchor="middle" font-size="${N>12?9.5:12}" font-family="Barlow,Arial" fill="var(--ink3)">${N>12?MN[+m[1]-1][0].toUpperCase():MN[+m[1]-1]}</text>${v>0?`<text x="${i*bw+bw/2}" y="${Math.max(H-h-4,11)}" text-anchor="middle" font-size="${N>12?9.5:11.5}" font-family="Barlow,Arial" fill="var(--ink2)">${fmt0(v)}</text>`:""}`}).join("")}</svg>`;
+}
+function pcTable(p,f,l){
+  const L=(D.pcs[p]||[]).slice().sort((a,b)=>((b[0]===f&&b[1]===l)-(a[0]===f&&a[1]===l))||(b[0]===f)-(a[0]===f));
+  if(!L.length)return'<p class="empty">Nenhum pedido em aberto para este produto.</p>';
+  return`<div class="tablewrap"><table class="mini"><thead><tr><th class="t">PC</th><th class="t">Filial / armazém</th><th>Pendente</th><th class="t">Entrega</th><th class="t">Projeto</th><th class="t">Fornecedor</th></tr></thead><tbody>${L.slice(0,12).map(x=>{const late=days(x[5])<0;return`<tr style="cursor:default"><td class="t">${x[2]}-${x[3]}</td><td class="t">${x[0]} / ${x[1]}${x[0]===f&&x[1]===l?' <span class="pill p-blue">este almox.</span>':""}</td><td>${fmt(x[4])}</td><td class="t">${dbr(x[5])}${late?' <span class="flag">atrasado</span>':""}</td><td class="t prj">${esc(x[8]||"—")}</td><td class="t">${esc(x[6])}</td></tr>`}).join("")}</tbody></table></div>${L.length>12?`<p class="note">e mais ${L.length-12} pedidos.</p>`:""}`;
+}
+function scTable(p,f,l){
+  const L=(D.scs[p]||[]).slice().sort((a,b)=>((b[0]===f&&b[1]===l)-(a[0]===f&&a[1]===l)));
+  if(!L.length)return'<p class="empty">Nenhuma SC aberta sem pedido para este produto.</p>';
+  return`<div class="tablewrap"><table class="mini"><thead><tr><th class="t">SC (filial + C1_NUM)</th><th class="t">Armazém</th><th>Pendente</th><th class="t">Emissão</th><th class="t">Projeto</th><th class="t">Solicitante</th><th class="t">Situação</th></tr></thead><tbody>${L.slice(0,12).map(x=>{const age=-days(x[5]);return`<tr style="cursor:default"><td class="t">${x[0]} – ${x[2]}-${x[3]}</td><td class="t">${x[1]}${x[0]===f&&x[1]===l?' <span class="pill p-red">este almox.</span>':""}</td><td>${fmt(x[4])}</td><td class="t">${dbr(x[5])}${age>180?' <span class="flag">'+age+' dias</span>':""}</td><td class="t prj">${esc(x[9]||"—")}</td><td class="t">${esc(x[7])}</td><td class="t">${esc(x[8])}</td></tr>`}).join("")}</tbody></table></div>`;
+}
+function openDrawer(x){
+  const host=document.getElementById("drawerHost"),last=document.activeElement;
+  host.innerHTML=`<div class="scrim"></div><aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="dh">
+  <button class="btn sec x" id="dclose">Fechar</button>
+  <h2 id="dh">${esc(x.P.c)}</h2><p style="margin:0 0 4px">${esc(x.P.d)}</p>
+  <p class="note" style="margin:0">${esc(almLabel(x.a))}, grupo ${esc(x.P.g)}, UM ${esc(x.P.u)}</p>
+  <p style="margin:12px 0 0"><span class="pill ${ST[x.st].c}">${ST[x.st].l}</span> ${x.abc?`<span class="pill p-gray">Curva ${x.abc}</span>`:""}</p>
+  <div class="ruler">${ruler({saldo:x.r.saldo,oth:x.othDisp,pc:S.abat?x.pc:0,sc:S.abat?x.sc:0,pp:x.pp,mx:x.mx})}${legend}</div>
+  <h3>Memória do cálculo</h3>${memoTable(x)}
+  <dl class="kv" style="margin-top:12px"><dt>Cobertura atual do almoxarifado</dt><dd>${x.cobAt==null?"—":fmt(x.cobAt)+" meses"}</dd><dt>Saldo total em outros armazéns da filial</dt><dd>${fmt(x.othSaldo)}</dd></dl>
+  <h3>Quantidade recebida por mês</h3>${bars(x.r.dem)}<p class="note">Barras escuras entram no consumo médio (janela de ${mes(S.win)}).</p>
+  <h3>Pedidos de compra aprovados em aberto</h3>${pcTable(x.r.p,x.a.f,x.a.l)}
+  <h3>SCs aprovadas sem pedido</h3>${scTable(x.r.p,x.a.f,x.a.l)}
+  <p style="margin-top:20px"><button class="btn" id="dsim">Simular requisição deste item</button></p></aside>`;
+  const close=()=>{host.innerHTML="";removeEventListener("keydown",k);last&&last.focus()};
+  const k=e=>{if(e.key==="Escape")close()};addEventListener("keydown",k);
+  host.querySelector(".scrim").onclick=close;document.getElementById("dclose").onclick=close;document.getElementById("dclose").focus();
+  document.getElementById("dsim").onclick=()=>{R.f=x.a.f;R.a=x.r.a;R.p=x.r.p;R.q=x.prev?String(x.prev):"";close();location.hash="requisicao";renderReq(true)};
+}
+let DL=null;(async()=>{try{DL=await(window.claude&&window.claude.use?window.claude.use("downloads"):null)}catch(e){DL=null}})();
+async function saveFile(name,data){
+  if(DL){try{await DL.save({filename:name,data});return true}catch(e){if(e&&e.code==="declined")toast("Download cancelado.");else toast("Não foi possível salvar o arquivo nesta visualização.");return false}}
+  const b=data instanceof Blob?data:new Blob([data]),u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000);return true;
+}
+document.getElementById("exp").onclick=async()=>{
+  const list=filtered(false);
+  if(!list.length){toast("Nenhum item nesta seleção.");return}
+  const n=v=>String(Math.round(v*100)/100).replace(".",",");
+  const lines=["FILIAL;ARMAZEM;PRODUTO;DESCRICAO;CONSUMO_MES;CONSUMO_DIA;LEAD_TIME_DIAS;ESTOQUE_SEGURANCA;PONTO_PEDIDO;ESTOQUE_MAXIMO;SALDO_ALMOX;DISP_OUTROS_ARM;PC_ABERTO;SC_ABERTA;POSICAO;NECESSIDADE_PREVISTA;SITUACAO"];
+  for(const x of list)lines.push([x.a.f,x.a.l,x.P.c,'"'+x.P.d.replace(/"/g,"'")+'"',n(x.cmm),n(x.cmd),Math.round(x.lt.d),x.es,x.pp,x.mx,n(x.r.saldo),n(x.othDisp),n(x.pc),n(x.sc),n(x.pos),x.prev,ST[x.st].l].join(";"));
+  if(await saveFile("necessidade_prevista.csv","\ufeff"+lines.join("\r\n")))toast("Arquivo gerado.");
+};
+function toast(t){document.querySelectorAll(".toast").forEach(e=>e.remove());const d=document.createElement("div");d.className="toast";d.setAttribute("role","status");d.textContent=t;document.body.appendChild(d);setTimeout(()=>d.remove(),3200)}
+document.getElementById("prem1").innerHTML=`<b>Premissas do cálculo</b><ul>
+<li>Consumo mensal: quantidade recebida (qtd_entregue) dos pedidos de compra aprovados, na filial de entrega + armazém, dividida pelo número de meses da janela. O mês é o da digitação da NF (mapa de pedidos); sem NF no mapa, a data de entrega prevista. Período disponível: ${MN[+MONTHS[0].slice(5)-1]}/${MONTHS[0].slice(0,4)} a ${MN[+MONTHS[N-1].slice(5)-1]}/${MONTHS[N-1].slice(0,4)}.</li>
+<li>Ponto de pedido = consumo médio diário × lead time + estoque de segurança. Estoque máximo = ponto de pedido + consumo médio diário × dias de cobertura. Posição = saldo do almoxarifado + disponível nos outros armazéns da filial + PCs e SCs aprovados em aberto (opcional). Necessidade prevista = máximo − posição, quando a posição chega ao ponto de pedido.</li>
+<li>Estoque de segurança: dias de consumo (CMD × dias) ou estatístico (1,65 × desvio padrão mensal × √(lead time/30), nível de serviço de 95%). Dos outros armazéns, só conta o saldo acima do máximo deles, para não descobrir um armazém para cobrir outro.</li>
+<li>Projeto obrigatório nos filtros: a tela mostra só os almoxarifados (filial + armazém) que aparecem nas SCs aprovadas do projeto escolhido (NOME_PROJETO).</li>
+<li>Somente documentos aprovados: SCs com C1_APROV = L e PCs com C7_CONAPRO = L. Saldo de outras filiais não entra.</li>
+<li>Situação “Acima do máximo”: saldo do almoxarifado maior que o estoque máximo calculado.</li>
+<li>Somente grupos que movimentam estoque (BM_XMVEST = S) e armazéns diferentes de 0000. Saldo considerado: B2_QATU, sem empenhos e reservas.</li></ul>`;
+
+// ---------- requisição
+const R={mode:"mat",f:"",a:null,p:null,sp:null,q:"",d:"",it:null,itKey:""};
+const SERV=D.serv.map((s,i)=>({i,c:s[0],d:s[1],u:s[2],g:s[3]}));
+const rf=document.getElementById("rf"),ra=document.getElementById("ra"),rp=document.getElementById("rp"),rq=document.getElementById("rq"),rd=document.getElementById("rd"),rl=document.getElementById("rplist");
+function fillRF(){rf.innerHTML='<option value="">Escolha a filial</option>'+FILIAIS.map(f=>`<option>${f}</option>`).join("");rf.value=R.f;fillRA()}
+const iso=d=>d.toISOString().slice(0,10);
+rd.value=R.d=iso(new Date(BASE.getTime()+7*864e5));
+function fillRA(){const L=ALM.filter(a=>a.f===R.f);ra.innerHTML=L.length?L.map(a=>`<option value="${a.i}">${esc(a.l+(a.n?" – "+a.n:""))}</option>`).join(""):'<option value="">—</option>';
+  if(R.a==null||!L.some(a=>a.i===R.a))R.a=L.length?L[0].i:null;if(R.a!=null)ra.value=R.a;syncLocal();renderHead()}
+rf.onchange=()=>{R.f=rf.value;R.a=null;fillRA();renderReq()};
+ra.onchange=()=>{R.a=+ra.value;syncLocal();renderHead();renderReq()};
+rq.oninput=()=>{R.q=rq.value;renderReq()};rd.onchange=()=>{R.d=rd.value;renderReq()};
+let acSel=-1,acItems=[];
+rp.oninput=()=>{const q=rp.value.trim().toUpperCase();if(q.length<2){rl.hidden=true;return}
+  const terms=q.split(/\s+/);const res=[];
+  const srv=R.mode==="srv";
+  for(const P of(srv?SERV:PROD)){if(!srv&&P.t==="SV")continue;const s=P.c+" "+P.d.toUpperCase();if(terms.every(t=>s.includes(t))){const r=!srv&&R.a!=null?rowAt.get(R.a+"|"+P.i):null;res.push({P,saldo:r?r.saldo:0,score:(P.c.startsWith(q)?2:0)+(r?1:0)});if(res.length>400)break}}
+  res.sort((a,b)=>b.score-a.score);acItems=res.slice(0,12);acSel=-1;
+  rl.innerHTML=acItems.length?acItems.map((x,i)=>`<button type="button" role="option" data-i="${i}">${esc(x.P.c)} ${x.saldo>0?`<span class="pill p-green">saldo ${fmt(x.saldo)}</span>`:""}<small>${esc(x.P.d)}</small></button>`).join(""):`<p class="empty" style="padding:8px 10px;margin:0">${srv?"Nenhum serviço (tipo SV) encontrado.":"Nenhum material encontrado. Para serviços, mude o tipo de solicitação."} Confira o código ou use outra palavra.</p>`;
+  rl.hidden=false};
+rp.onkeydown=e=>{const bs=[...rl.querySelectorAll("button")];if(rl.hidden||!bs.length)return;
+  if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();acSel=(acSel+(e.key==="ArrowDown"?1:-1)+bs.length)%bs.length;bs.forEach((b,i)=>b.classList.toggle("on",i===acSel));bs[acSel].scrollIntoView({block:"nearest"})}
+  else if(e.key==="Enter"&&acSel>=0){e.preventDefault();pick(acSel)} else if(e.key==="Escape")rl.hidden=true};
+rl.onclick=e=>{const b=e.target.closest("button");if(b)pick(+b.dataset.i)};
+document.addEventListener("click",e=>{if(!e.target.closest(".ac"))rl.hidden=true});
+function pick(i){const P=acItems[i].P;if(R.mode==="srv")R.sp=P.i;else R.p=P.i;rp.value=P.c+" – "+P.d;rl.hidden=true;renderReq();rq.focus()}
+function setMode(m,keep){R.mode=m;if(typeof CART!=="undefined"){syncLocal();renderHead()}document.querySelectorAll("#rmode button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.m===m)));document.getElementById("raw").hidden=m==="srv";document.getElementById("rmnote").textContent=m==="srv"?"Sem análise de estoque. Só aceita itens do tipo SV.":"Com análise de estoque, PCs e SCs abertos.";document.getElementById("rplab").textContent=m==="srv"?"Serviço (B1_COD, tipo SV)":"Material (B1_COD)";rp.placeholder=m==="srv"?"Digite código ou descrição do serviço":"Digite código ou descrição do material";if(!keep){R.p=null;R.sp=null;R.q="";R.itKey="";rp.value="";rq.value=""}}
+document.getElementById("rmode").onclick=e=>{const b=e.target.closest("button");if(!b||b.dataset.m===R.mode)return;setMode(b.dataset.m);renderReq();rp.focus()};
+function renderReq(sync){
+  if(sync){setMode(R.mode,true);fillRF();rf.value=R.f;fillRA();if(R.a!=null)ra.value=R.a;const SP=R.mode==="srv"?(R.sp!=null?SERV[R.sp]:null):(R.p!=null?PROD[R.p]:null);rp.value=SP?SP.c+" – "+SP.d:"";rq.value=R.q;rd.value=R.d}
+  if(R.mode==="srv")return renderSrv();
+  const out=document.getElementById("rout");
+  if(!R.f||R.a==null||R.p==null){out.innerHTML=`<div class="panel box"><h3>Escolha o almoxarifado e o produto</h3><p class="empty" style="margin:0">A necessidade prevista aparece assim que você seleciona filial, armazém e produto. Na sugestão de produtos, o selo verde indica saldo no almoxarifado escolhido.</p></div>`;return}
+  const A=ALM[R.a],P=PROD[R.p],q=parseFloat(String(R.q).replace(",","."))||0,need=R.d;
+  const row=rowAt.get(R.a+"|"+R.p)||{a:R.a,p:R.p,saldo:0,vatu:0,cm:0,dem:Array(N).fill(0)};
+  const x=calc(row);
+  const all=(rowsByProd.get(R.p)||[]).filter(r=>r.a!==R.a&&r.saldo>0).map(r=>({a:ALM[r.a],s:r.saldo}));
+  const otherF=all.filter(o=>o.a.f!==A.f).sort((a,b)=>b.s-a.s), otherFsum=otherF.reduce((s,o)=>s+o.s,0);
+  const pcs=(D.pcs[R.p]||[]).filter(p=>p[0]===A.f&&p[1]===A.l);
+  const scsSame=(D.scs[R.p]||[]).filter(s=>s[0]===A.f&&s[1]===A.l);
+  const avgW=a=>a?a.slice(N-S.win).reduce((s,v)=>s+v,0)/S.win:0;
+  const cF=avgW(D.demf[R.p+"|"+A.f]), cP=avgW(D.demp[R.p]), lastA=D.lasta[R.p+"|"+A.f+"|"+A.l];
+  const special=q>0&&q>x.prev, exc=special?q-x.prev:0;
+  let cls,head,txt;
+  if(!q){cls="";head=`Necessidade prevista: ${fmt0(x.prev)} ${P.u}`;txt=x.cmm===0?`Sem consumo na janela de ${mes(S.win)}. Qualquer quantidade informada exigirá aprovação especial.`:x.prev===0?(S.trig&&!x.hit?`A posição (${fmt(x.pos)}) está acima do ponto de pedido (${fmt0(x.pp)}): ainda não é hora de comprar. Uma compra agora exigirá aprovação especial.`:`A posição já atinge o estoque máximo (${fmt0(x.mx)}). Uma compra agora exigirá aprovação especial.`):`Informe a quantidade a comprar. Até ${fmt0(x.prev)} ${P.u}, a SC segue a aprovação normal.`}
+  else if(!special){cls="ok";head="Dentro da necessidade prevista";txt=`Compra de ${fmt(q)} ${P.u} para uma necessidade prevista de ${fmt0(x.prev)} ${P.u}. A SC segue a aprovação normal.`}
+  else{cls="stop";head="Acima da necessidade prevista: a SC exige aprovação especial";txt=`Solicitado ${fmt(q)} ${P.u}, previsto ${fmt0(x.prev)} ${P.u}: ${fmt(exc)} ${P.u} acima da necessidade prevista.${x.prev===0&&x.cmm>0?(S.trig&&!x.hit?` A posição está acima do ponto de pedido.`:` A posição já atinge o máximo.`):""} É obrigatório justificar.`}
+  const hints=[];
+  if(scsSame.length)hints.push(`Já existe SC aprovada sem pedido neste almoxarifado: ${scsSame.map(s=>s[0]+" – "+s[2]+"-"+s[3]+" ("+fmt(s[4])+" "+P.u+")").join("; ")}. Complemente ou acompanhe essa SC.`);
+  if(row.saldo>0)hints.push(`Há ${fmt(row.saldo)} ${P.u} neste almoxarifado. Para uso imediato, faça uma solicitação ao armazém (MATA105) em vez de comprar.`);
+  if(x.othDisp>0)hints.push(`Os outros armazéns da filial têm ${fmt(x.othDisp)} ${P.u} acima do próprio máximo (${x.oth.filter(o=>o.disp>0).map(o=>"arm. "+o.a.l+": "+fmt(o.disp)).join(", ")}). Considere transferência (MATA261).`);
+  const m=memo(x);
+  const consNote=x.cmm>0?"":cF>0?`Sem recebimento neste armazém em ${mes(S.win)}${lastA?` (o último foi ${esc(lastA[1])}, em ${dbr(lastA[0])})`:""}; a filial ${A.f} recebeu o item em outro armazém.`:cP>0?`Sem recebimento na filial ${A.f} em ${mes(S.win)}; houve recebimento só em outras filiais.`:`Sem recebimento deste item na janela.`;
+  const ctx={A,P,q,need,row,x,special,exc,pcs,scsSame,otherFsum};
+  out.innerHTML=`
+  <div class="verdict ${cls}"><h2>${esc(head)}</h2><p>${esc(txt)}</p>
+   <ul class="alloc">${m.map((z,i)=>`<li${i===m.length-1?' style="border-color:var(--ink)"':""}><b>${z[2]}</b><span><strong>${z[0]}</strong><br><span class="note">${esc(z[1])}</span></span></li>`).join("")}
+   ${q>0?`<li style="border-color:${special?"var(--red)":"var(--green)"}"><b>${fmt(q)}</b><span><strong>Quantidade a comprar informada</strong><br><span class="note">${special?`aprovação especial: ${fmt(exc)} acima da necessidade prevista`:"aprovação normal"}</span></span></li>`:""}</ul>
+   ${hints.length?`<div class="hints">${hints.map(h=>`<p>${esc(h)}</p>`).join("")}</div>`:""}
+  </div>
+  <div class="panel box"><h3>Posição na filial ${esc(A.f)}, armazém ${esc(A.l)}${A.n?" – "+esc(A.n):""}</h3>
+   <div class="ruler">${ruler({saldo:row.saldo,oth:x.othDisp,pc:S.abat?x.pc:0,sc:S.abat?x.sc:0,pp:x.pp,mx:x.mx,q})}${legend}</div>
+   <div class="grid2" style="margin-top:10px">
+    <dl class="kv"><dt>Saldo neste almoxarifado (B2_QATU)</dt><dd>${fmt(row.saldo)} ${esc(P.u)}</dd><dt>Saldo nos outros armazéns da filial</dt><dd>${fmt(x.othSaldo)}</dd><dt>Disponível para transferência</dt><dd>${fmt(x.othDisp)}</dd><dt>PCs aprovados a caminho</dt><dd>${fmt(x.pc)}</dd><dt>SCs aprovadas sem pedido</dt><dd>${fmt(x.sc)}</dd><dt>Saldo em outras filiais <span class="note">(não entra no cálculo)</span></dt><dd>${fmt(otherFsum)}</dd></dl>
+    <dl class="kv"><dt>Consumo médio neste almoxarifado</dt><dd>${fmt(x.cmm)}/mês</dd><dt>Na filial ${esc(A.f)} (todos os armazéns)</dt><dd>${fmt(cF)}/mês</dd><dt>Em todas as filiais</dt><dd>${fmt(cP)}/mês</dd><dt>Último recebimento neste almoxarifado</dt><dd>${lastA?dbr(lastA[0])+" ("+esc(lastA[1])+")":"nenhum"}</dd><dt>Cobertura atual</dt><dd>${x.cobAt==null?"—":fmt(x.cobAt)+" meses"}</dd><dt>Lead time de referência (${esc(x.lt.src)})</dt><dd>${fmt0(x.lt.d)} dias</dd></dl>
+   </div>${consNote?`<p class="note" style="margin:12px 0 0;max-width:80ch">${consNote}</p>`:""}
+   <p class="note" style="margin:12px 0 0">Política em uso: ${policy()}. <a href="#parametros">Alterar em Parâmetros de reposição</a>.</p></div>
+  ${q>0?itemForm(ctx):""}
+  <div class="panel box"><h3>Pedidos de compra aprovados em aberto</h3>${pcTable(R.p,A.f,A.l)}</div><div class="panel box"><h3>SCs aprovadas sem pedido</h3>${scTable(R.p,A.f,A.l)}</div>
+  ${otherF.length?`<div class="panel box"><h3>Saldo em outras filiais</h3><p class="note" style="margin:-4px 0 8px">Apenas informativo: não entra na necessidade prevista.</p><div class="tablewrap"><table class="mini"><thead><tr><th class="t">Filial / armazém</th><th>Saldo</th></tr></thead><tbody>${otherF.slice(0,10).map(o=>`<tr style="cursor:default"><td class="t">${esc(almLabel(o.a))}</td><td>${fmt(o.s)}</td></tr>`).join("")}</tbody></table></div></div>`:""}`;
+  if(document.getElementById("itform"))bindItemForm(ctx);
+}
+
+// ---------- SC de serviço (sem análise de estoque)
+const lockMsg=()=>`<p class="pmiss">A SC em montagem é da filial <b>${esc(CART.f)}</b>. Uma SC tem uma só filial: gere ou esvazie a SC atual antes de incluir itens de outra filial.</p>`;
+const optsLocalSrv=f=>[["0000","0000 – não controla estoque"],...optsFor("local",f)];
+function renderSrv(){
+  const out=document.getElementById("rout");
+  if(!R.f||R.sp==null){out.innerHTML=`<div class="panel box"><h3>SC de serviço</h3><p class="empty" style="margin:0">Escolha a filial e o serviço. Serviços (B1_TIPO = SV) não passam pela análise de estoque: não há saldo, consumo nem necessidade prevista. Materiais continuam obrigatoriamente na opção “Material”.</p></div>`;return}
+  const P=SERV[R.sp],f=R.f,q=parseFloat(String(R.q).replace(",","."))||0,key="S|"+f+"|"+P.i;
+  if(R.itKey!==key){const lp=D.lps[P.i];R.it={local:"0000",preco:lp?String(lp[0]):"",xobs2:"",just:""};R.itKey=key;
+    const ex=CART.items.find(z=>z.key===key);if(ex)Object.assign(R.it,{local:ex.local,preco:String(ex.preco),xobs2:ex.xobs2})}
+  const it=R.it,lp=D.lps[P.i],inCart=CART.items.some(z=>z.key===key),lock=CART.items.length&&CART.f!==f;
+  out.innerHTML=`<div class="verdict"><h2>SC de serviço, sem análise de estoque</h2><p>${esc(P.c)} – ${esc(P.d)} (grupo ${esc(P.g)}). A SC segue a aprovação normal.</p></div>
+  ${q>0?`<div class="panel box" id="itform"><h3>Dados do serviço para a SC</h3>
+   ${lock?lockMsg():""}
+   <div class="scgrid">
+    <label class="fld">${lab("Orçamento (valor unitário)","C1_PRECO_UNT",1)}<input data-k="preco" type="number" min="0" step="0.01" inputmode="decimal" required aria-required="true" value="${esc(it.preco)}"><small class="note">${lp?`Referência: último PC ${esc(lp[2])} (filial ${esc(lp[3])}, ${dbr(lp[1])}): ${brl2.format(lp[0])}.`:"Sem preço de referência na base."} Total: <b id="sctot">${brl2.format((parseFloat(it.preco)||0)*q)}</b></small></label>
+    <label class="fld wide">${lab("Observação do item <span class=\"note\">opcional</span>","C1_XOBS2",0)}<textarea data-k="xobs2" placeholder="Escopo do serviço, local de execução, prazo, contato">${esc(it.xobs2)}</textarea></label>
+   </div><div id="iterr" class="scerr" role="alert" hidden></div>
+   <p style="margin:12px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="btn red" id="itadd" ${lock?"disabled":""}>${inCart?"Atualizar serviço na SC":`Adicionar à SC: ${fmt(q)} ${esc(P.u)}`}</button>${CART.items.length?`<a class="btn sec" href="#scitens" style="text-decoration:none">Ver SC em montagem (${CART.items.length})</a>`:""}</p></div>`
+  :`<div class="panel box"><p class="empty" style="margin:0">Informe a quantidade do serviço para preencher os dados da SC.</p></div>`}`;
+  const box=document.getElementById("itform");if(!box)return;
+  box.querySelectorAll("[data-k]").forEach(el=>{const h=()=>{it[el.dataset.k]=el.value;el.removeAttribute("aria-invalid");if(el.dataset.k==="preco")document.getElementById("sctot").textContent=brl2.format((parseFloat(el.value)||0)*q)};el.addEventListener("input",h);el.addEventListener("change",h)});
+  document.getElementById("itadd").onclick=()=>{
+    const miss=[];if(!(parseFloat(it.preco)>0))miss.push(["preco","Orçamento"]);
+    box.querySelectorAll("[data-k]").forEach(el=>el.toggleAttribute("aria-invalid",miss.some(m=>m[0]===el.dataset.k)));
+    const err=document.getElementById("iterr");
+    const hm=headMissing();markHead(hm);
+    if(miss.length||hm.length){err.innerHTML=`<b>Preencha antes de adicionar:</b> ${[...hm.map(m=>m[1]),...miss.map(m=>m[1])].map(esc).join(", ")}.${hm.length?" Os campos da SC ficam no formulário à esquerda.":""}`;err.hidden=false;if(!hm.length)box.querySelector("[aria-invalid]").focus();return}
+    const snap={key,srv:true,f,l:"—",an:"",sp:P.i,c:P.c,d:P.d,u:P.u,q,need:R.d,local:H().local,preco:parseFloat(it.preco),xobs2:it.xobs2.trim(),special:false,just:""};
+    const i=CART.items.findIndex(z=>z.key===key);if(i>=0)CART.items[i]=snap;else CART.items.push(snap);
+    CART.f=f;CART.done=null;saveCart();toast(i>=0?"Serviço atualizado.":`Serviço incluído (${CART.items.length} na SC).`);
+    R.sp=null;R.q="";R.itKey="";rp.value="";rq.value="";renderReq();renderCart();rp.focus();
+  };
+}
+
+// ---------- cabeçalho da SC (formulário à esquerda)
+const HF=[["pj","Projeto","NOME_PROJETO"],["cc","Centro de custo","C1_CC"],["fin","Finalidade","FINALIDADE"],["dem","Tipo de demanda","DEMANDA"],["mod","Modalidade","MODALIDADE"],["forn","Fornecedor","código + loja"],["local","Local de entrega","código ZZF"]];
+const FORN=D.forn.map(x=>({c:x[0],l:x[1],n:x[2],cnpj:x[3],k:x[0]+"-"+x[1]}));
+const fornBy=new Map(FORN.map(x=>[x.k,x]));
+document.getElementById("fornlist").innerHTML=FORN.map(x=>`<option value="${x.k}">${esc(x.n)}${x.cnpj?" – CNPJ "+x.cnpj:""}</option>`).join("");
+const isDireta=v=>/^direta$/i.test(v||"");
+const H=()=>CART.head;
+const ZZF=D.zzf.map((z,i)=>({i,c:z[0],f:z[1],cnpj:z[2],desc:z[3],end:z[4],pj:z[5],cc:z[6],obs:z[7],cep:z[8]}));
+const zzfByCode=new Map();for(const z of ZZF)(zzfByCode.get(z.c)||zzfByCode.set(z.c,[]).get(z.c)).push(z);
+const padZ=v=>{v=String(v||"").trim();const m=v.match(/^(\d{1,3})(\s|–|-|$)/);return m?m[1].padStart(3,"0"):v.split(/\s/)[0]};
+const fmtCNPJ=c=>/^\d{14}$/.test(c)?`${c.slice(0,2)}.${c.slice(2,5)}.${c.slice(5,8)}/${c.slice(8,12)}-${c.slice(12)}`:(c||"—");
+function resolveZ(code,f){const L=zzfByCode.get(padZ(code));if(!L)return null;return L.find(z=>z.f===f)||L[0]}
+const curZ=()=>{const h=H();return h.local?(h.localZ!=null&&ZZF[h.localZ]&&ZZF[h.localZ].c===h.local?ZZF[h.localZ]:resolveZ(h.local,CART.f||R.f)):null};
+document.getElementById("zzflist").innerHTML=ZZF.map(z=>`<option value="${esc(z.c)}">${esc(z.desc)}${z.f?" (filial "+z.f+")":""}</option>`).join("");
+function syncLocal(){const h=H();if(h.local&&!zzfByCode.has(h.local)){h.local="";h.localZ=null;saveCart()}}
+function zzfBox(){const z=curZ(),h=H();if(!h.local)return'<small class="note">Digite o código (coluna ZZF_REF) ou escolha uma sugestão.</small>';
+  if(!z)return'<small class="flag">Código não encontrado na tabela de locais de entrega (ZZF).</small>';
+  const dup=(zzfByCode.get(z.c)||[]).length>1;
+  return`<div class="zzf"><b>${esc(z.c)} – ${esc(z.desc)}</b><span>CNPJ: ${esc(fmtCNPJ(z.cnpj))}</span><span>Endereço: ${esc(z.end||"—")}</span>${dup?`<span class="flag">Código ${esc(z.c)} aparece mais de uma vez na ZZF; usado o registro da filial ${esc(z.f||"—")}.</span>`:""}</div>`}
+function zzfSug(){const h=H(),f=R.f;const L=ZZF.filter(z=>z.f===f).map(z=>({z,s:(h.pj&&z.pj===h.pj?2:0)+(h.cc&&z.cc===String(optLabel("cc",f,h.cc)).split(" ")[0]?1:0)})).sort((a,b)=>b.s-a.s).slice(0,4);
+  return L.length?`<div class="zsug">${L.map(x=>`<button type="button" class="btn sec" data-zz="${x.z.i}">${esc(x.z.c)} – ${esc(x.z.desc)}</button>`).join("")}</div>`:""}
+function prjOpts(){
+  const used=PRJ.map(p=>({p,k:p.locs.filter(x=>x.f===R.f).reduce((s,x)=>s+x.k,0),ka:p.locs.filter(x=>x.f===R.f&&R.a!=null&&x.l===ALM[R.a].l).reduce((s,x)=>s+x.k,0)})).filter(z=>z.k>0).sort((a,b)=>b.ka-a.ka||b.k-a.k);
+  const set=new Set(used.map(z=>z.p.c)),o=p=>`<option value="${esc(p.c)}" ${p.c===H().pj?"selected":""}>${esc(p.n)}</option>`;
+  return`<option value="">Selecione</option>${used.length?`<optgroup label="Usados nesta filial">${used.map(z=>o(z.p)).join("")}</optgroup>`:""}<optgroup label="Outros projetos">${PRJ.filter(p=>!set.has(p.c)).map(o).join("")}</optgroup>`;
+}
+const headLabel=k=>{const h=H(),v=h[k];if(k==="pj")return prjName(v);if(k==="cc")return optLabel("cc",CART.f||R.f,v);if(k==="local"){const z=curZ();return z?`${z.c} – ${z.desc}`:v}if(k==="forn"){const fo=fornBy.get(v);return fo?`${fo.k} – ${fo.n}`:v}return v};
+function headMissing(){const h=H(),m=[];for(const[k,l,c]of HF){if(k==="local"){if(!curZ())m.push([k,l+" (código ZZF)"]);continue}if(k==="forn"){if(isDireta(h.mod)&&!fornBy.has(h.forn||""))m.push([k,l+" (modalidade Direta)"]);continue}if(!h[k])m.push([k,l+" ("+c+")"])}return m}
+function markHead(miss){document.querySelectorAll("#rhead [data-hf]").forEach(el=>el.toggleAttribute("aria-invalid",miss.some(m=>m[0]===el.dataset.hf)));const f=document.querySelector("#rhead [aria-invalid]");if(f){f.scrollIntoView({block:"center",behavior:"smooth"});f.focus({preventScroll:true})}}
+function renderHead(){
+  const box=document.getElementById("rhead");if(!box)return;
+  if(!R.f){box.innerHTML="";return}
+  const h=H(),f=R.f,sel=(k,opts)=>`<select data-hf="${k}" required aria-required="true"><option value="">Selecione</option>${opts.map(([v,t])=>`<option value="${esc(v)}" ${v===h[k]?"selected":""}>${esc(t)}</option>`).join("")}</select>`;
+  const L=(k,l,c)=>`<span>${l} <span class="note">(${c})</span> <b class="reqmark" aria-hidden="true">*</b></span>`;
+  const fo=fornBy.get(h.forn||"");
+  box.innerHTML=`
+  <label class="fld">${L("pj","Projeto","NOME_PROJETO")}<select data-hf="pj" required aria-required="true">${prjOpts()}</select></label>
+  <label class="fld">${L("cc","Centro de custo","C1_CC")}${sel("cc",optsFor("cc",f))}</label>
+  <label class="fld">${L("fin","Finalidade","FINALIDADE")}${sel("fin",optsFor("fin",f))}</label>
+  <label class="fld">${L("dem","Tipo de demanda","DEMANDA")}${sel("dem",optsFor("dem",f))}</label>
+  <label class="fld">${L("mod","Modalidade","MODALIDADE")}${sel("mod",optsFor("mod",f))}</label>
+  ${isDireta(h.mod)?`<label class="fld">${L("forn","Fornecedor","código-loja")}<input data-hf="forn" list="fornlist" autocomplete="off" required aria-required="true" placeholder="Ex.: 405138-01 ou parte do nome" value="${esc(h.forn||"")}"><small class="note" id="fornnm">${fo?esc(fo.n)+(fo.cnpj?", CNPJ "+fo.cnpj:""):h.forn?'<span class="flag">Fornecedor não encontrado nos PCs aprovados.</span>':"Digite o código ou o nome e escolha na lista."}</small></label>`:""}
+  <div class="fld">${L("local","Local de entrega","código ZZF")}<input id="zzfin" aria-label="Local de entrega, código ZZF" data-hf="local" list="zzflist" autocomplete="off" required aria-required="true" inputmode="numeric" placeholder="Ex.: 003" value="${esc(h.local||"")}"><div id="zzfres">${zzfBox()}</div>${!h.local?zzfSug():""}</div>`;
+  box.querySelectorAll("[data-hf]").forEach(el=>{
+    const k=el.dataset.hf,upd=()=>{let v=el.value.trim();
+      if(k==="forn"){const hit=FORN.find(x=>x.k===v)||FORN.find(x=>x.c===v)||(v.length>=4?FORN.find(x=>x.n.toUpperCase().includes(v.toUpperCase())):null);if(hit&&hit.k!==v&&el.matches(":focus")===false){v=hit.k;el.value=v}
+        h.forn=v;const fo=fornBy.get(v);document.getElementById("fornnm").innerHTML=fo?esc(fo.n)+(fo.cnpj?", CNPJ "+fo.cnpj:""):v?'<span class="flag">Fornecedor não encontrado nos PCs aprovados.</span>':"Digite o código ou o nome e escolha na lista.";}
+      else h[k]=v;
+      if(k==="local"){v=padZ(v);el.value=v;h.local=v;const z=resolveZ(v,R.f);h.localZ=z?z.i:null}
+      el.removeAttribute("aria-invalid");saveCart();
+      if(k==="mod"){if(!isDireta(v))h.forn="";renderHead();const n=document.querySelector('#rhead [data-hf="forn"]');if(n)n.focus()}
+      if(k==="local"){document.getElementById("zzfres").innerHTML=zzfBox();const sg=box.querySelector(".zsug");if(sg&&h.local)sg.remove()}
+      renderCart()};
+    el.addEventListener("change",upd);if(k==="forn")el.addEventListener("blur",upd);
+  });
+  box.querySelectorAll("[data-zz]").forEach(b=>b.onclick=()=>{const z=ZZF[+b.dataset.zz];h.local=z.c;h.localZ=z.i;saveCart();renderHead();renderCart()});
+}
+
+// ---------- itens da SC
+const HEADF=[["xobs1","Motivo da SC","C1_XOBS1","area"]];
+const CART=(()=>{try{const c=JSON.parse(localStorage.getItem("rtt-cart2")||"null");if(c&&Array.isArray(c.items))return c}catch(e){}return{f:"",items:[],head:{},done:null}})();
+const ATT=[];
+function attHTML(id){return`<span>Anexos da SC <span class="note">(opcional)</span></span>
+   <label class="btn sec" style="align-self:flex-start;cursor:pointer;position:relative">📎 Anexar documentos<input id="${id}" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt,.msg,.eml,.zip" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer"></label>
+   ${ATT.length?`<ul class="atts" style="padding:0;margin:4px 0 0">${ATT.map((a,i)=>`<li><span style="overflow-wrap:anywhere">${esc(a.name)} <span class="note">${fmtSize(a.size)}</span></span><button class="btn sec" data-att="${i}" style="padding:3px 9px" aria-label="Remover ${esc(a.name)}">Remover</button></li>`).join("")}</ul>`:""}
+   <small class="note">PDF, imagens, Word, Excel, e-mail ou ZIP, até 10 MB cada. Ficam só nesta sessão do navegador; no Protheus iriam para o banco de conhecimento da SC.</small>`}
+function refreshAtt(){renderAtt();renderCart()}
+function renderAtt(){const b=document.getElementById("attbox");if(!b)return;b.innerHTML=attHTML("attin1");bindAtt(b,"attin1")}
+function bindAtt(root,id){
+  root.querySelector("#"+id).onchange=async e=>{const fs=[...e.target.files];let skip=0;
+    for(const f of fs){if(f.size>10*1024*1024||ATT.length>=15){skip++;continue}const img=/^image\/(png|jpe?g)$/.test(f.type);ATT.push({name:f.name,size:f.size,type:f.type,url:img?await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f)}):null})}
+    refreshAtt();toast(skip?`${skip} arquivo(s) não anexado(s): limite de 10 MB por arquivo e 15 arquivos.`:`${fs.length} documento(s) anexado(s) à SC.`)};
+  root.querySelectorAll("[data-att]").forEach(b=>b.onclick=()=>{ATT.splice(+b.dataset.att,1);refreshAtt()});
+}
+const fmtSize=b=>b<1024?b+" B":b<1048576?nf.format(b/1024)+" KB":nf.format(b/1048576)+" MB";
+const saveCart=()=>{try{localStorage.setItem("rtt-cart2",JSON.stringify(CART))}catch(e){}};
+function optsFor(k,f){
+  if(k==="fin")return D.fins.map(v=>[v,v]); if(k==="dem")return D.dems.map(v=>[v,v]); if(k==="mod")return D.mods.map(v=>[v,v]);
+  if(k==="local")return ALM.filter(a=>a.f===f).map(a=>[a.l,a.l+(a.n?" – "+a.n:"")]);
+  if(k==="cc")return(D.ccf[f]||[]).map(c=>[c[0],c[0]+(c[1]?" – "+c[1]:"")]);
+  if(k==="prj")return(D.prjf[f]||[]).map(c=>[c[0],c[1]||c[0]]);
+  return[];
+}
+const optLabel=(k,f,v)=>{const o=(k==="local"?optsLocalSrv(f):optsFor(k,f)).find(z=>z[0]===v);return o?o[1]:v};
+const lab=(l,c,req)=>`<span>${l} <span class="note">(${c})</span>${req?' <b class="reqmark" aria-hidden="true">*</b>':""}</span>`;
+const selHTML=(k,f,val,attr)=>`<select ${attr} required aria-required="true"><option value="">Selecione</option>${optsFor(k,f).map(([v,t])=>`<option value="${esc(v)}" ${v===val?"selected":""}>${esc(t)}</option>`).join("")}</select>`;
+function itemForm(c){
+  const {A,P,q,row,special,exc}=c,key=A.i+"|"+P.i;
+  if(R.itKey!==key){const lp=D.lpc[P.i];R.it={local:A.l,preco:lp?String(lp[0]):(row.cm>0?String(Math.round(row.cm*100)/100):""),xobs2:"",just:""};R.itKey=key;
+    const ex=CART.items.find(z=>z.key===key);if(ex)Object.assign(R.it,{local:ex.local,preco:String(ex.preco),xobs2:ex.xobs2,just:ex.just||""})}
+  const it=R.it,lp=D.lpc[P.i],inCart=CART.items.some(z=>z.key===key),lock=CART.items.length&&CART.f!==A.f;
+  const ref=[lp?`último PC ${esc(lp[2])} (filial ${esc(lp[3])}, ${dbr(lp[1])}): ${brl2.format(lp[0])}`:"",row.cm>0?`custo médio no almoxarifado: ${brl2.format(row.cm)}`:""].filter(Boolean).join("; ");
+  return`<div class="panel box" id="itform"><h3>Dados do item para a SC</h3>
+  ${lock?lockMsg():""}
+  ${special?`<p class="pmiss" style="background:var(--red-soft)"><b>Aprovação especial.</b> A quantidade passa ${fmt(exc)} ${esc(P.u)} da necessidade prevista. A justificativa é obrigatória e a SC será marcada para aprovação especial.</p>`:""}
+  <div class="scgrid">
+   <label class="fld">${lab("Orçamento (valor unitário)","C1_PRECO_UNT",1)}<input data-k="preco" type="number" min="0" step="0.01" inputmode="decimal" required aria-required="true" value="${esc(it.preco)}"><small class="note">${ref?"Referência: "+ref+".":"Sem preço de referência na base."} Total do item: <b id="sctot">${brl2.format((parseFloat(it.preco)||0)*q)}</b></small></label>
+   <label class="fld wide">${lab("Observação do item <span class=\"note\">opcional</span>","C1_XOBS2",0)}<textarea data-k="xobs2" placeholder="Especificação, marca de referência, embalagem, instruções de entrega">${esc(it.xobs2)}</textarea></label>
+   ${special?`<label class="fld wide">${lab("Justificativa para aprovação especial","C1_XJUSTIF",1)}<textarea data-k="just" required aria-required="true" placeholder="Por que comprar acima da necessidade prevista? Ex.: parada programada, OS nº, consumo extra previsto">${esc(it.just)}</textarea></label>`:""}
+  </div><div id="iterr" class="scerr" role="alert" hidden></div>
+  <p style="margin:12px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="btn red" id="itadd" ${lock?"disabled":""}>${inCart?"Atualizar item na SC":`Adicionar à SC: ${fmt(q)} ${esc(P.u)}`}</button>${CART.items.length?`<a class="btn sec" href="#scitens" style="text-decoration:none">Ver SC em montagem (${CART.items.length})</a>`:""}</p></div>`;
+}
+function bindItemForm(c){
+  const box=document.getElementById("itform"),it=R.it,{A,q}=c;
+  box.querySelectorAll("[data-k]").forEach(el=>{const h=()=>{it[el.dataset.k]=el.value;el.removeAttribute("aria-invalid");
+    if(el.dataset.k==="preco")document.getElementById("sctot").textContent=brl2.format((parseFloat(el.value)||0)*q);
+};el.addEventListener("input",h);el.addEventListener("change",h)});
+  document.getElementById("itadd").onclick=()=>{
+    const miss=[];if(!(parseFloat(it.preco)>0))miss.push(["preco","Orçamento"]);if(c.special&&it.just.trim().length<15)miss.push(["just","Justificativa para aprovação especial (mínimo 15 caracteres)"]);
+    box.querySelectorAll("[data-k]").forEach(el=>el.toggleAttribute("aria-invalid",miss.some(m=>m[0]===el.dataset.k)));
+    const err=document.getElementById("iterr");
+    const hm=headMissing();markHead(hm);
+    if(miss.length||hm.length){err.innerHTML=`<b>Preencha antes de adicionar:</b> ${[...hm.map(m=>m[1]),...miss.map(m=>m[1])].map(esc).join(", ")}.${hm.length?" Os campos da SC ficam no formulário à esquerda.":""}`;err.hidden=false;if(!hm.length)box.querySelector("[aria-invalid]").focus();return}
+    err.hidden=true;addToCart(c);
+  };
+}
+function addToCart(c){
+  const {A,P,q,need,row,x,special,exc,pcs,scsSame,otherFsum}=c,it=R.it,key=A.i+"|"+P.i;
+  const snap={key,a:A.i,f:A.f,l:A.l,an:A.n,p:P.i,c:P.c,d:P.d,u:P.u,q,need,win:S.win,cobm:S.cobm,abatOn:S.abat,cmm:x.cmm,cmd:x.cmd,tot:x.tot,es:x.es,pp:x.pp,mx:x.mx,pos:x.pos,esL:esLabel(),trig:S.trig,memo:memo(x).map(z=>[z[0],z[1],z[2]]),saldo:row.saldo,
+    othSaldo:x.othSaldo,othDisp:x.othDisp,othList:x.oth.map(o=>[o.a.l,o.saldo,o.need,o.disp]),pc:x.pc,sc:x.sc,prev:x.prev,special,exc,cobAt:x.cobAt,lt:x.lt.d,ltsrc:x.lt.src,
+    pcList:pcs.map(p=>[p[2],p[3],p[4],p[5]]),scList:scsSame.map(s=>[s[2],s[3],s[4],s[5]]),otherF:otherFsum,
+    local:H().local,preco:parseFloat(it.preco),xobs2:it.xobs2.trim(),just:special?it.just.trim():""};
+  const i=CART.items.findIndex(z=>z.key===key);
+  if(i>=0)CART.items[i]=snap;else CART.items.push(snap);
+  CART.f=A.f;CART.done=null;saveCart();
+  toast(i>=0?"Item atualizado.":`Item incluído (${CART.items.length} na SC). Escolha o próximo produto.`);
+  R.p=null;R.q="";R.itKey="";rp.value="";rq.value="";renderReq();renderCart();rp.focus();
+}
+function renderCart(){
+  const host=document.getElementById("rcart");if(!host)return;
+  if(!CART.items.length){host.innerHTML="";return}
+  const f=CART.f,h=CART.head,nSp=CART.items.filter(z=>z.special).length;
+  const tot=CART.items.reduce((s,z)=>s+z.q*z.preco,0);
+  host.innerHTML=`<section class="panel box" id="scitens" style="margin-top:18px" aria-labelledby="scith">
+  <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline"><h3 id="scith" style="margin:0">SC em montagem – filial ${esc(f)}</h3><span class="note">${CART.items.length} ${CART.items.length===1?"item":"itens"}; orçamento ${brl2.format(tot)}</span></div>
+  ${nSp?`<p class="pmiss" style="background:var(--red-soft)"><b>Esta SC exige aprovação especial:</b> ${nSp} ${nSp===1?"item está":"itens estão"} acima da necessidade prevista.</p>`:""}
+  ${CART.done?`<div class="pmiss" style="background:var(--green-soft)"><b>SC ${esc(CART.done.num)} simulada e relatório gerado em ${esc(CART.done.at)}.</b> Nada foi enviado ao Protheus. <button class="btn sec" id="cnew" style="margin-left:8px">Iniciar nova requisição</button></div>`:""}
+  <div class="tablewrap" style="margin-top:12px"><table class="mini"><thead><tr><th class="t">#</th><th class="t">Produto</th><th class="t">Arm.</th><th>Consumo/mês</th><th>Lead time</th><th>Ponto de pedido</th><th>Máximo</th><th>Posição</th><th>Necessidade prevista</th><th>Qtd. a comprar</th><th class="t">Aprovação</th><th>Orç. unit.</th><th>Total</th><th></th></tr></thead><tbody>
+  ${CART.items.map((z,i)=>`<tr style="cursor:default"><td class="t">${i+1}</td><td class="t"><b>${esc(z.c)}</b>${z.srv?' <span class="pill p-blue">Serviço</span>':""}<span class="d">${esc(z.d)}</span></td><td class="t">${esc(z.l)}</td>${z.srv?'<td colspan="5" class="note" style="text-align:center">sem análise de estoque</td>':`<td>${fmt(z.cmm)}</td><td>${fmt0(z.lt)} d</td><td>${fmt0(z.pp)}</td><td>${fmt0(z.mx)}</td><td>${fmt(z.pos)}</td>`}<td>${z.srv?"—":fmt0(z.prev)}</td><td><b>${fmt(z.q)}</b> ${esc(z.u)}</td>
+   <td class="t">${z.special?'<span class="pill p-red">Especial</span>':'<span class="pill p-green">Normal</span>'}</td><td>${brl2.format(z.preco)}</td><td>${brl2.format(z.q*z.preco)}</td>
+   <td class="t" style="white-space:nowrap"><button class="btn sec" data-ed="${i}" style="padding:4px 9px">Revisar</button> <button class="btn sec" data-rm="${i}" style="padding:4px 9px">Remover</button></td></tr>`).join("")}
+  </tbody></table></div>
+  <h3>Dados gerais da SC <span class="note" style="font:400 13px var(--body)">valem para todos os itens</span></h3>
+  <div class="scgrid" id="headf">${HEADF.map(([k,l,c,tp])=>tp==="area"?`<label class="fld wide">${lab(l,c,1)}<textarea data-h="${k}" required aria-required="true" placeholder="Por que estes materiais são necessários? Ex.: reposição para a parada da unidade, OS 77812">${esc(h[k]||"")}</textarea></label>`:`<label class="fld">${lab(l,c,1)}${selHTML(k,f,h[k]||"",`data-h="${k}"`)}</label>`).join("")}</div>
+  <dl class="kv" style="margin-top:12px;max-width:760px">${HF.filter(([k])=>k!=="forn"||isDireta(h.mod)).map(([k,l,c])=>`<dt>${l} <span class="note">(${c})</span></dt><dd style="text-align:right">${h[k]?esc(headLabel(k)):'<span class="flag">não informado</span>'}</dd>`).join("")}</dl>
+  <p class="note" style="margin:6px 0 0">Projeto, centro de custo, finalidade, demanda, modalidade, fornecedor e local de entrega são alterados no formulário à esquerda e valem para toda a SC.</p>
+  <div class="fld wide" style="margin-top:14px">${attHTML("attin2")}</div>
+  <div id="cerr" class="scerr" role="alert" hidden></div>
+  <p style="margin:14px 0 0;display:flex;gap:8px;flex-wrap:wrap"><button class="btn red" id="cgo">Gerar SC e relatório em PDF</button><button class="btn sec" id="cclr">Esvaziar lista</button></p></section>`;
+  host.querySelectorAll("[data-h]").forEach(el=>{const hd=()=>{h[el.dataset.h]=el.value;el.removeAttribute("aria-invalid");saveCart()};el.addEventListener("input",hd);el.addEventListener("change",hd)});
+  host.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{CART.items.splice(+b.dataset.rm,1);if(!CART.items.length){CART.f="";CART.done=null}saveCart();renderCart();renderReq()});
+  host.querySelectorAll("[data-ed]").forEach(b=>b.onclick=()=>{const z=CART.items[+b.dataset.ed];R.mode=z.srv?"srv":"mat";R.f=z.f;if(z.srv)R.sp=z.sp;else{R.a=z.a;R.p=z.p}R.q=String(z.q);R.d=z.need;R.itKey="";if(location.hash!=="#requisicao")location.hash="requisicao";renderReq(true);scrollTo({top:0,behavior:"smooth"})});
+  document.getElementById("cclr").onclick=()=>{if(!confirm("Remover todos os itens da SC em montagem?"))return;CART.items=[];CART.f="";CART.done=null;ATT.length=0;saveCart();renderCart();renderAtt();renderReq()};
+  const nw=document.getElementById("cnew");if(nw)nw.onclick=()=>{CART.items=[];CART.f="";CART.done=null;CART.head={};ATT.length=0;saveCart();syncLocal();renderHead();renderCart();renderAtt();renderReq()};
+  document.getElementById("cgo").onclick=generate;
+  bindAtt(host,"attin2");
+}
+async function generate(){
+  const err=document.getElementById("cerr"),h=CART.head;
+  const hm=headMissing();markHead(hm);
+  const miss=[...HEADF.filter(([k])=>String(h[k]||"").trim().length<10).map(z=>[z[0],z[1],z[2]]),...hm.map(z=>[z[0],z[1].replace(/ \(.*\)$/,""),z[1].match(/\((.*)\)$/)?.[1]||""])];
+  document.querySelectorAll("[data-h]").forEach(el=>el.toggleAttribute("aria-invalid",miss.some(m=>m[0]===el.dataset.h)));
+  if(miss.length){err.innerHTML=`<b>Preencha os dados da SC:</b> ${miss.map(m=>esc(m[1]+(m[2]?" ("+m[2]+")":""))).join(", ")}.${miss.some(m=>m[0]==="xobs1")?" O motivo precisa ter ao menos 10 caracteres.":""}`;err.hidden=false;const fx=document.querySelector("#headf [aria-invalid]");if(fx)fx.focus();return}
+  err.hidden=true;
+  if(!window.jspdf){toast("A biblioteca de PDF não carregou. Verifique a conexão e tente de novo.");return}
+  const now=new Date(),pad=n=>String(n).padStart(2,"0");
+  const at=`${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const num="SIM-"+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate())+"-"+pad(now.getHours())+pad(now.getMinutes());
+  if(await saveFile(`SC_${CART.f}_${num}.pdf`,buildPdf(num,at))){CART.done={num,at};saveCart();renderCart();toast("Relatório gerado. Nada foi enviado ao Protheus.")}
+}
+function buildPdf(num,at){
+  const {jsPDF}=window.jspdf,doc=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+  const T=s=>String(s??"").replace(/[–—]/g,"-").replace(/[“”]/g,'"').replace(/[’‘]/g,"'").replace(/−/g,"-").replace(/×/g,"x").replace(/…/g,"...");
+  const n=v=>v==null?"-":nf.format(v),n0=v=>v==null?"-":nf0.format(v),m=v=>v==null?"-":brl2.format(v);
+  const f=CART.f,h=CART.head,items=CART.items,sp=items.filter(z=>z.special);
+  const INK=[43,41,48],RED=[217,43,44],GRN=[43,122,75],GR=[110,107,117],W=297;
+  const tot=items.reduce((s,z)=>s+z.q*z.preco,0),excV=sp.reduce((s,z)=>s+z.exc*z.preco,0);
+  doc.setFillColor(...RED);doc.rect(0,0,W,3,"F");
+  doc.setFont("helvetica","bold");doc.setFontSize(16);doc.setTextColor(...INK);doc.text(T("Solicitação de compra - resumo da análise de estoque"),12,14);
+  if(sp.length){doc.setFillColor(...RED);doc.roundedRect(W-62,7.5,50,8,1.5,1.5,"F");doc.setTextColor(255);doc.setFontSize(9.5);doc.text("APROVAÇÃO ESPECIAL",W-37,12.8,{align:"center"})}
+  doc.setFont("helvetica","normal");doc.setFontSize(9.5);doc.setTextColor(...GR);
+  doc.text(T(`Filial ${f}   |   Número provisório ${num}   |   Emitido em ${at}   |   Dados do Protheus de ${D.meta.base}`),12,20);
+  let y=25;
+  const kp=[["Itens na SC",String(items.length)+(items.some(z=>z.srv)?`  (${items.filter(z=>z.srv).length} serviço${items.filter(z=>z.srv).length>1?"s":""})`:"")],["Itens com aprovação especial",String(sp.length)],["Valor acima da necessidade prevista",m(excV)],["Orçamento total",m(tot)]];
+  kp.forEach((k,i)=>{const x=12+i*69;doc.setDrawColor(217,216,223);doc.setFillColor(246,246,248);doc.roundedRect(x,y,65,15,1.5,1.5,"FD");doc.setFontSize(8.5);doc.setTextColor(...GR);doc.text(T(k[0]),x+4,y+5.5);doc.setFont("helvetica","bold");doc.setFontSize(13);doc.setTextColor(...(i===1&&sp.length?RED:INK));doc.text(T(k[1]),x+4,y+12);doc.setFont("helvetica","normal")});
+  y+=21;
+  doc.autoTable({startY:y,theme:"grid",margin:{left:12,right:12},styles:{fontSize:9,cellPadding:1.8,textColor:INK,lineColor:[217,216,223]},
+    columnStyles:{0:{fontStyle:"bold",cellWidth:48,fillColor:[246,246,248]},2:{fontStyle:"bold",cellWidth:40,fillColor:[246,246,248]}},
+    body:[["Motivo da SC (C1_XOBS1)",{content:T(h.xobs1),colSpan:3}],["Projeto (NOME_PROJETO)",{content:T(prjName(h.pj)),colSpan:3}],["Centro de custo (C1_CC)",{content:T(optLabel("cc",f,h.cc)),colSpan:3}],["Finalidade",T(h.fin),"Tipo de demanda",T(h.dem)],["Modalidade",T(h.mod),"Fornecedor",T(isDireta(h.mod)?headLabel("forn"):"-")],["Local de entrega (ZZF)",{content:T(headLabel("local")),colSpan:3}],["CNPJ / endereço de entrega",{content:T((()=>{const z=curZ();return z?`CNPJ ${fmtCNPJ(z.cnpj)}  |  ${z.end}`:"-"})()),colSpan:3}],["Anexos",{content:ATT.length?T(ATT.map(a=>a.name).join("; ")):"nenhum",colSpan:3}]]});
+  y=doc.lastAutoTable.finalY+6;
+  doc.setFont("helvetica","bold");doc.setFontSize(11);doc.setTextColor(...INK);doc.text("Resumo por item",12,y);y+=2;
+  const head={fillColor:INK,textColor:255,fontStyle:"bold",fontSize:8,halign:"center",valign:"middle"};
+  doc.autoTable({startY:y,theme:"grid",margin:{left:12,right:12},headStyles:head,styles:{fontSize:8,cellPadding:1.5,textColor:INK,lineColor:[217,216,223],valign:"middle"},
+    head:[["#","Produto","Arm.","Data nec.","Consumo/ mês","Lead time (d)","Ponto de pedido","Máximo","Posição","Necess. prevista","Qtd. a comprar","Aprovação","Orç. unit.","Total"]],
+    body:items.map((z,i)=>[i+1,T(z.c+(z.srv?" (serviço)":"")+"\n"+z.d),z.l,dbr(z.need),...(z.srv?[{content:"serviço: sem análise de estoque",colSpan:5,styles:{halign:"center",textColor:GR}},"-"]:[n(z.cmm),n0(z.lt),n0(z.pp),n0(z.mx),n(z.pos),n0(z.prev)]),{content:n(z.q)+" "+z.u,styles:{fontStyle:"bold"}},{content:z.special?"Especial":"Normal",styles:{fontStyle:"bold",textColor:z.special?RED:GRN}},m(z.preco),m(z.q*z.preco)]),
+    foot:[[{content:"Total",colSpan:13,styles:{halign:"right"}},m(tot)]],footStyles:{fillColor:[246,246,248],textColor:INK,fontStyle:"bold",fontSize:8.5,halign:"right"},
+    columnStyles:{0:{cellWidth:7,halign:"center"},1:{cellWidth:53},2:{cellWidth:10,halign:"center"},3:{cellWidth:18,halign:"center"},4:{cellWidth:16,halign:"right"},5:{cellWidth:19,halign:"right"},6:{cellWidth:16,halign:"right"},7:{cellWidth:17,halign:"right"},8:{cellWidth:17,halign:"right"},9:{cellWidth:16,halign:"right"},10:{cellWidth:20,halign:"right"},11:{cellWidth:20,halign:"center"},12:{cellWidth:20,halign:"right"},13:{cellWidth:24,halign:"right"}}});
+  y=doc.lastAutoTable.finalY+7;
+  if(y>170){doc.addPage("a4","landscape");y=16}
+  doc.setFont("helvetica","bold");doc.setFontSize(11);doc.setTextColor(...INK);doc.text("Memória de cálculo por item",12,y);y+=2;
+  const det=[];
+  items.forEach((z,i)=>{
+    if(z.srv){det.push([{content:`${i+1}. ${T(z.c)} - ${T(z.d)}  |  SERVIÇO  |  aprovação normal`,colSpan:2,styles:{fontStyle:"bold",fillColor:[246,246,248],textColor:INK}}]);
+      det.push(["Análise de estoque","não se aplica: serviço (B1_TIPO = SV)"]);det.push(["Quantidade",T(`${n(z.q)} ${z.u}`)]);
+      det.push(["Local de entrega / orçamento",T(`${headLabel("local")} / ${m(z.preco)} por ${z.u}, total ${m(z.q*z.preco)}`)]);if(z.xobs2)det.push(["Observação do item (C1_XOBS2)",T(z.xobs2)]);return}
+    det.push([{content:`${i+1}. ${T(z.c)} - ${T(z.d)}  |  armazém ${z.l}${z.an?" - "+T(z.an):""}  |  ${z.special?"APROVAÇÃO ESPECIAL":"aprovação normal"}`,colSpan:2,styles:{fontStyle:"bold",fillColor:[246,246,248],textColor:z.special?RED:INK}}]);
+    z.memo.forEach((r,k)=>{const hl=k===z.memo.length-1||k===4;det.push([{content:T(r[0]),styles:hl?{fontStyle:"bold",textColor:INK}:{}},{content:T(`${r[2]}   (${r[1]})`).replace(/√/g,"raiz").replace(/≤/g,"<="),styles:hl?{fontStyle:"bold"}:{}}])});
+    det.push(["PCs e SCs aprovados em aberto",T(`PCs: ${z.pcList.length?z.pcList.map(p=>`${p[0]}-${p[1]} ${n(p[2])}, entrega ${dbr(p[3])}${days(p[3])<0?" (atrasado)":""}`).join("; "):"nenhum"}  |  SCs: ${z.scList.length?z.scList.map(s=>`${s[0]}-${s[1]} ${n(s[2])}`).join("; "):"nenhuma"}`)]);
+    det.push([{content:"Quantidade a comprar",styles:{fontStyle:"bold",textColor:INK}},{content:T(`${n(z.q)} ${z.u}`+(z.special?`  -  ${n(z.exc)} acima da necessidade prevista`:"")),styles:{fontStyle:"bold",textColor:z.special?RED:INK}}]);
+    det.push(["Cobertura atual e outras filiais",T(`cobertura atual ${z.cobAt==null?"-":n(z.cobAt)+" meses"}; saldo em outras filiais (não considerado): ${n(z.otherF)}`)]);
+    det.push(["Local de entrega / orçamento",T(`${headLabel("local")} / ${m(z.preco)} por ${z.u}, total ${m(z.q*z.preco)}`)]);
+    if(z.xobs2)det.push(["Observação do item (C1_XOBS2)",T(z.xobs2)]);
+    if(z.just)det.push([{content:"Justificativa (C1_XJUSTIF)",styles:{textColor:RED}},T(z.just)]);
+  });
+  doc.autoTable({startY:y,theme:"grid",margin:{left:12,right:12},styles:{fontSize:8.2,cellPadding:1.5,textColor:INK,lineColor:[217,216,223]},columnStyles:{0:{cellWidth:56,textColor:GR}},body:det});
+  if(ATT.length){y=doc.lastAutoTable.finalY+7;if(y>175){doc.addPage("a4","landscape");y=16}
+    doc.setFont("helvetica","bold");doc.setFontSize(11);doc.setTextColor(...INK);doc.text(`Anexos (${ATT.length})`,12,y);y+=2;
+    doc.autoTable({startY:y,theme:"grid",margin:{left:12,right:12},headStyles:head,styles:{fontSize:8.2,cellPadding:1.5,textColor:INK,lineColor:[217,216,223]},head:[["#","Arquivo","Tipo","Tamanho","No relatório"]],
+      body:ATT.map((a,i)=>[i+1,T(a.name),T(a.type||"-"),fmtSize(a.size),a.url?"imagem nas páginas seguintes":"listado apenas"]),columnStyles:{0:{cellWidth:8},3:{cellWidth:24},4:{cellWidth:50}}});
+    for(const a of ATT.filter(a=>a.url)){doc.addPage("a4","landscape");doc.setFont("helvetica","bold");doc.setFontSize(11);doc.setTextColor(...INK);doc.text(T("Anexo: "+a.name),12,14);
+      try{const pr=doc.getImageProperties(a.url),mw=273,mh=178,s=Math.min(mw/pr.width,mh/pr.height);doc.addImage(a.url,/png$/i.test(a.type)?"PNG":"JPEG",12,20,pr.width*s,pr.height*s)}catch(e){doc.setFont("helvetica","normal");doc.setFontSize(9);doc.text("Não foi possível incluir a imagem.",12,24)}}}
+  const pages=doc.getNumberOfPages();
+  for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFontSize(7.5);doc.setTextColor(...GR);doc.setFont("helvetica","normal");
+    doc.text(T(`Simulação: nada foi enviado ao Protheus. Ponto de pedido = CMD x lead time + estoque de segurança; necessidade = máximo - posição. Saldo B2_QATU; só SCs e PCs aprovados.`),12,203);
+    doc.text(`Página ${i} de ${pages}`,W-12,203,{align:"right"})}
+  return doc.output("blob");
+}
+pjSel.onchange=()=>{PJ=pjSel.value;try{localStorage.setItem("rtt-prj",PJ)}catch(e){}F.f="";F.a="";fillFF();fillAlm();PG=0;renderParams()};
+// ---------- início
+fillRF();syncSeg();recompute();renderParams();setMode("mat",true);route();renderCart();renderAtt();
+</script>
+
+</body>
+</html>

@@ -11,12 +11,16 @@ import type { Status } from "./types";
  */
 const onNetlify = () => !!process.env.NETLIFY || !!process.env.NETLIFY_BLOBS_CONTEXT || !!process.env.DEPLOY_ID;
 const LOCAL_DIR = path.join(process.cwd(), ".data");
-const blobs = () => getStore({ name: "rtt-estoque", consistency: "strong" });
+const blobs = () => getStore({ name: "rtt-estoque" });
+
+/** O Blobs pode demorar ou travar fora do contexto esperado: nunca deixa a rota esperar mais que `ms`. */
+const limite = <T,>(p: Promise<T>, ms = 4000): Promise<T> =>
+  Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Blobs demorou demais")), ms))]);
 
 export async function readDatasetText(): Promise<{ text: string; seed: boolean }> {
   try {
     if (onNetlify()) {
-      const t = await blobs().get("dataset.json", { type: "text" });
+      const t = await limite(blobs().get("dataset.json", { type: "text" }), 8000);
       if (t) return { text: t, seed: false };
     } else {
       return { text: await fs.readFile(path.join(LOCAL_DIR, "dataset.json"), "utf8"), seed: false };
@@ -29,7 +33,7 @@ export async function readDatasetText(): Promise<{ text: string; seed: boolean }
 
 export async function writeDatasetText(text: string): Promise<void> {
   if (onNetlify()) {
-    await blobs().set("dataset.json", text);
+    await limite(blobs().set("dataset.json", text), 20000);
     return;
   }
   await fs.mkdir(LOCAL_DIR, { recursive: true });
@@ -46,7 +50,7 @@ const SEED_STATUS: StatusFull = { atualizadoEm: "2026-11-03T06:00:00-03:00", ori
 export async function readStatus(): Promise<StatusFull> {
   try {
     if (onNetlify()) {
-      const t = await blobs().get("status.json", { type: "json" });
+      const t = await limite(blobs().get("status.json", { type: "json" }));
       if (t) return t as StatusFull;
     } else {
       return JSON.parse(await fs.readFile(path.join(LOCAL_DIR, "status.json"), "utf8"));
@@ -59,7 +63,7 @@ export async function readStatus(): Promise<StatusFull> {
 
 export async function writeStatus(s: StatusFull): Promise<void> {
   if (onNetlify()) {
-    await blobs().setJSON("status.json", s);
+    await limite(blobs().setJSON("status.json", s));
     return;
   }
   await fs.mkdir(LOCAL_DIR, { recursive: true });

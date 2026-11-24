@@ -26,7 +26,7 @@ export function Usuarios() {
   const [pending, setPending] = useState<Pending>(null);
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
-  const [secret, setSecret] = useState<{ email: string; pass: string } | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; t: string } | null>(null);
 
   const load = useCallback(async () => {
     try { setUsers((await call<{ users: U[] }>("/api/usuarios", "GET")).users); setErr(""); }
@@ -52,14 +52,18 @@ export function Usuarios() {
     e.preventDefault();
     const f = { ...form };
     ask(`Criar ${f.email}`, async (c) => {
-      const r = await call<{ tempPassword: string }>("/api/usuarios", "POST", { ...f, confirmPassword: c });
-      setSecret({ email: f.email, pass: r.tempPassword });
+      const r = await call<{ emailSent: boolean }>("/api/usuarios", "POST", { ...f, confirmPassword: c });
+      setNotice(r.emailSent
+        ? { ok: true, t: `Convite enviado para ${f.email}. A pessoa define a própria senha pelo link (vale 24 horas).` }
+        : { ok: false, t: `${f.email} foi criado, mas o e-mail com o link não pôde ser enviado. Use "Reenviar convite" na lista.` });
       setForm({ name: "", email: "", role: "user" });
     });
   };
   const patch = (u: U, body: Record<string, unknown>, title: string) => ask(title, async (c) => {
-    const r = await call<{ tempPassword?: string }>(`/api/usuarios/${u.id}`, "PATCH", { ...body, confirmPassword: c });
-    if (r.tempPassword) setSecret({ email: u.email, pass: r.tempPassword });
+    const r = await call<{ emailSent?: boolean }>(`/api/usuarios/${u.id}`, "PATCH", { ...body, confirmPassword: c });
+    if (r.emailSent === true) setNotice({ ok: true, t: `Link para definir a senha enviado para ${u.email} (vale 24 horas).` });
+    else if (r.emailSent === false) setNotice({ ok: false, t: `Não foi possível enviar o e-mail para ${u.email}. Tente "Reenviar convite" em instantes.` });
+    else setNotice({ ok: true, t: "Alteração salva." });
   });
 
   return (
@@ -77,15 +81,12 @@ export function Usuarios() {
             </select></label>
           <button className="btn red">Criar usuário</button>
         </form>
-        <p className="note" style={{ margin: "8px 0 0" }}>O sistema gera uma senha provisória, mostrada uma única vez. A pessoa a troca no primeiro acesso e recebe o código de verificação por e-mail.</p>
+        <p className="note" style={{ margin: "8px 0 0" }}>A pessoa recebe um link por e-mail e define a própria senha no primeiro acesso; depois entra com senha e código de verificação por e-mail. Ninguém precisa enviar senha por chat.</p>
       </section>
 
-      {secret && (
-        <div className="pmiss" style={{ background: "var(--green-soft)", marginTop: 14 }} role="status">
-          <b>Senha provisória de {secret.email}:</b> <code className="tmp">{secret.pass}</code>{" "}
-          <button className="btn sec" onClick={() => void navigator.clipboard?.writeText(secret.pass)}>Copiar</button>{" "}
-          <button className="btn sec" onClick={() => setSecret(null)}>Ocultar</button>
-          <div className="note">Ela não será exibida de novo. Entregue por um canal seguro (não por e-mail ou chat em grupo).</div>
+      {notice && (
+        <div className="pmiss" style={{ background: notice.ok ? "var(--green-soft)" : "var(--amber-soft)", marginTop: 14 }} role="status">
+          {notice.t} <button className="btn sec" style={{ marginLeft: 8 }} onClick={() => setNotice(null)}>Ok</button>
         </div>
       )}
       {err && !pending && <div className="scerr" role="alert">{err}</div>}
@@ -103,7 +104,7 @@ export function Usuarios() {
                     <td className="t"><b>{u.name}</b>{self && <span className="note"> (você)</span>}</td>
                     <td className="t">{u.email}</td>
                     <td className="t">{u.role === "admin" ? <span className="pill p-red">Administrador</span> : u.role === "gestor" ? <span className="pill p-blue">Gestor de suprimentos</span> : <span className="pill p-gray">Usuário</span>}</td>
-                    <td className="t">{!u.active ? <span className="pill p-gray">Desativado</span> : u.mustChangePassword ? <span className="pill p-amber">Aguardando 1º acesso</span> : <span className="pill p-green">Ativo</span>}</td>
+                    <td className="t">{!u.active ? <span className="pill p-gray">Desativado</span> : u.mustChangePassword ? <span className="pill p-amber">Aguardando definir a senha</span> : <span className="pill p-green">Ativo</span>}</td>
                     <td className="t" style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       {isAdmin && !self && (
                         <select aria-label={`Papel de ${u.email}`} value={u.role} style={{ padding: "3px 6px", marginRight: 6 }}
@@ -111,7 +112,8 @@ export function Usuarios() {
                           <option value="user">Usuário</option><option value="gestor">Gestor de suprimentos</option><option value="admin">Administrador</option>
                         </select>
                       )}
-                      {isAdmin && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "reset" }, `Redefinir a senha de ${u.email}`)}>Redefinir senha</button>}{" "}
+                      {u.active && u.mustChangePassword && (isAdmin || u.role === "user") && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "invite" }, `Reenviar o convite para ${u.email}`)}>Reenviar convite</button>}{" "}
+                      {isAdmin && !u.mustChangePassword && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "reset" }, `Enviar link de redefinição de senha para ${u.email} (a senha atual deixa de valer agora)`)}>Redefinir senha</button>}{" "}
                       {!self && (isAdmin || u.role === "user") && <button className="btn sec" style={{ padding: "4px 9px" }} onClick={() => patch(u, { action: "active", active: !u.active }, `${u.active ? "Desativar" : "Reativar"} ${u.email}`)}>{u.active ? "Desativar" : "Reativar"}</button>}
                     </td>
                   </tr>

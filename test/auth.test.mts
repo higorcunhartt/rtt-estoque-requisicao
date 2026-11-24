@@ -19,6 +19,8 @@ const verify = await import("../app/api/auth/verify/route.ts");
 const logout = await import("../app/api/auth/logout/route.ts");
 const me = await import("../app/api/auth/me/route.ts");
 const change = await import("../app/api/auth/change-password/route.ts");
+const setPw = await import("../app/api/auth/set-password/route.ts");
+const forgotRoute = await import("../app/api/auth/forgot/route.ts");
 const dados = await import("../app/api/dados/route.ts");
 const status = await import("../app/api/status/route.ts");
 const usuarios = await import("../app/api/usuarios/route.ts");
@@ -29,10 +31,15 @@ const db = new PGlite();
 setSql(async (s, ...v) => (await db.query(s.reduce((a, x, i) => a + "$" + i + x), v)).rows as any);
 
 let lastCode = "";
+let lastLinkToken = "";
+let linkMails = 0;
 const origLog = console.log;
 console.log = (...a: unknown[]) => {
   const m = String(a[0]).match(/\[DEV\] Código MFA para .*: (\d{6})/);
-  if (m) lastCode = m[1]; else origLog(...a);
+  const l = String(a[0]).match(/\[DEV\] Link de senha para .*#t=(\S+)/);
+  if (m) lastCode = m[1];
+  else if (l) { lastLinkToken = l[1]; linkMails++; }
+  else origLog(...a);
 };
 console.error = () => {};
 
@@ -174,14 +181,25 @@ test("gestão de usuários: só admin, com reautenticação, e nada de se auto-r
   assert.equal((await post(adminCookie, { ...novo, email: "fulano@fora.com", confirmPassword: PASS })).status, 400); // domínio não permitido
   const ok = await post(adminCookie, { ...novo, confirmPassword: PASS });
   assert.equal(ok.status, 201);
-  const { user, tempPassword } = await ok.json();
-  assert.ok(tempPassword.length >= 16);
-  assert.ok(!JSON.stringify(user).includes("password"));
+  const created = await ok.json();
+  const user = created.user;
+  assert.equal(created.emailSent, true);
+  assert.ok(!JSON.stringify(created).match(/tempPassword|password_hash|passwordHash|"password"/), "a resposta não carrega senha nenhuma");
+  assert.ok(lastLinkToken.length > 30);
   assert.equal((await post(adminCookie, { ...novo, confirmPassword: PASS })).status, 409); // duplicado
 
-  // a conta nova entra com a senha provisória e é obrigada a trocá-la
-  const c = await fullLogin("fulano@x.com", tempPassword);
-  assert.equal((await dados.GET(req("GET", "/api/dados", undefined, { cookie: c }))).status, 403);
+  // conta nova não entra até a pessoa definir a própria senha pelo link
+  const early = await login.POST(req("POST", "/api/auth/login", { email: "fulano@x.com", password: "qualquer-coisa-123" }, { "x-forwarded-for": newIp() }));
+  assert.equal(early.status, 401);
+  const weak = await setPw.POST(req("POST", "/api/auth/set-password", { token: lastLinkToken, newPassword: "senha123456" }));
+  assert.equal(weak.status, 400); // senha fraca não gasta o link
+  const bad = await setPw.POST(req("POST", "/api/auth/set-password", { token: "token-invalido", newPassword: "minha-frase-nova-99" }));
+  assert.equal(bad.status, 400);
+  const tokenInvite = lastLinkToken;
+  assert.equal((await setPw.POST(req("POST", "/api/auth/set-password", { token: tokenInvite, newPassword: "minha-frase-nova-99" }))).status, 200);
+  assert.equal((await setPw.POST(req("POST", "/api/auth/set-password", { token: tokenInvite, newPassword: "outra-frase-nova-99" }))).status, 400); // uso único
+  const c = await fullLogin("fulano@x.com", "minha-frase-nova-99");
+  assert.equal((await dados.GET(req("GET", "/api/dados", undefined, { cookie: c }))).status, 200); // sem troca forçada: ela já escolheu
 
   const patch = (id: string, body: unknown) => usuarioId.PATCH(req("PATCH", `/api/usuarios/${id}`, body, { cookie: adminCookie }), { params: Promise.resolve({ id }) });
   const self = (await db.query("select id from users where email = 'gestor@x.com'")).rows[0] as { id: string };
@@ -191,10 +209,18 @@ test("gestão de usuários: só admin, com reautenticação, e nada de se auto-r
   // desativar derruba a sessão aberta da pessoa
   assert.equal((await patch(user.id, { action: "active", active: false, confirmPassword: PASS })).status, 200);
   assert.equal((await me.GET(req("GET", "/api/auth/me", undefined, { cookie: c }))).status, 401);
-  // redefinir reativa, gera outra provisória e exige nova troca
+  // redefinir: a senha antiga deixa de valer na hora e a pessoa recebe um link para criar outra (nada de senha na resposta)
+  const before = linkMails;
   const reset = await patch(user.id, { action: "reset", confirmPassword: PASS });
   assert.equal(reset.status, 200);
-  assert.notEqual((await reset.json()).tempPassword, tempPassword);
+  const rj = await reset.json();
+  assert.equal(rj.emailSent, true);
+  assert.ok(!JSON.stringify(rj).match(/tempPassword/));
+  assert.equal(linkMails, before + 1);
+  const old = await login.POST(req("POST", "/api/auth/login", { email: "fulano@x.com", password: "minha-frase-nova-99" }, { "x-forwarded-for": newIp() }));
+  assert.equal(old.status, 401);
+  assert.equal((await setPw.POST(req("POST", "/api/auth/set-password", { token: lastLinkToken, newPassword: "terceira-frase-nova-99" }))).status, 200);
+  assert.equal((await patch(user.id, { action: "invite", confirmPassword: PASS })).status, 409); // já definiu a senha: reenviar convite não vale
   assert.equal((await patch("nao-e-um-id", { action: "reset", confirmPassword: PASS })).status, 404);
 });
 test("gestor de suprimentos: atualiza dados e cria usuários comuns, mas não reseta senha nem mexe em admin", async () => {
@@ -241,4 +267,31 @@ test("usuário comum continua sem acesso à gestão nem à gravação de dados",
   assert.equal((await usuarios.GET(req("GET", "/api/usuarios", undefined, { cookie: c }))).status, 403);
   const put = await dados.PUT(new Request("http://localhost/api/dados", { method: "PUT", body: "{}", headers: { "content-type": "application/json", cookie: c } }));
   assert.equal(put.status, 403);
+});
+test("esqueci minha senha: resposta igual para conta inexistente; o link troca a senha e derruba sessões", async () => {
+  process.env.FORGOT_MIN_MS = "0";
+  const known = await forgotRoute.POST(req("POST", "/api/auth/forgot", { email: "comum@x.com" }, { "x-forwarded-for": newIp() }));
+  const unknown = await forgotRoute.POST(req("POST", "/api/auth/forgot", { email: "ninguem-mesmo@x.com" }, { "x-forwarded-for": newIp() }));
+  assert.equal(known.status, 200);
+  assert.deepEqual(await known.json(), await unknown.json());
+  assert.ok(lastLinkToken.length > 30);
+  const cookie = await fullLogin("comum@x.com");
+  assert.equal((await setPw.POST(req("POST", "/api/auth/set-password", { token: lastLinkToken, newPassword: "senha-nova-depois-do-esqueci-1" }))).status, 200);
+  assert.equal((await me.GET(req("GET", "/api/auth/me", undefined, { cookie }))).status, 401); // sessão antiga caiu
+  await fullLogin("comum@x.com", "senha-nova-depois-do-esqueci-1");
+});
+
+test("gestor reenvia convite só de quem ainda não definiu a senha", async () => {
+  await addUser("sup2@x.com", "gestor");
+  const g = await fullLogin("sup2@x.com");
+  const post = (body: unknown) => usuarios.POST(req("POST", "/api/usuarios", body, { cookie: g }));
+  const patch = (id: string, body: unknown) => usuarioId.PATCH(req("PATCH", `/api/usuarios/${id}`, body, { cookie: g }), { params: Promise.resolve({ id }) });
+  const c = await post({ name: "Pendente", email: "pendente@x.com", role: "user", confirmPassword: PASS });
+  const pend = (await c.json()).user;
+  const before = linkMails;
+  assert.equal((await patch(pend.id, { action: "invite", confirmPassword: PASS })).status, 200);
+  assert.equal(linkMails, before + 1);
+  const other = (await db.query("select id from users where email = 'comum@x.com'")).rows[0] as { id: string };
+  assert.equal((await patch(other.id, { action: "invite", confirmPassword: PASS })).status, 409); // já usa a conta: sem atalho de reset
+  assert.equal((await patch(other.id, { action: "reset", confirmPassword: PASS })).status, 403);
 });

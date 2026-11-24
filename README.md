@@ -34,12 +34,12 @@ Variáveis de ambiente: copie `.env.example` para `.env.local`.
 
 Toda a aplicação exige login: **e-mail + senha + código de 6 dígitos enviado por e-mail**. Os dados (`/api/dados`, `/api/status`) só saem do servidor com sessão válida.
 
-- **Usuários:** banco PostgreSQL próprio (Neon). `npm run migrate` cria as tabelas e o primeiro administrador (`ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD`). Outros usuários: `USER_PASSWORD=... npm run usuario -- email@rttshop.com.br "Nome" user` (ou `admin`). A senha provisória vale só até o primeiro acesso, quando o sistema exige a troca.
+- **Usuários:** banco PostgreSQL próprio (Neon). `npm run migrate` cria as tabelas e o primeiro administrador (`ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD`). Outros usuários: `USER_PASSWORD=... npm run usuario -- email@rttshop.com.br "Nome" user` (ou `admin`). 
 - **Papéis:** `user` consulta e simula requisições. `gestor` (gestor de suprimentos) também atualiza os dados (Excel e botão do sistema), cria usuários comuns e ativa/desativa usuários comuns; não redefine senha de ninguém, não mexe em papéis nem em administradores. `admin` faz tudo, inclusive redefinir senhas e criar/promover gestores e administradores.
 - **Máquinas** (n8n, agendador): continuam usando `ADMIN_TOKEN`/`CRON_SECRET` em cabeçalho, sem sessão.
 - **Segurança:** senhas com bcrypt (custo 12); sessão em cookie `HttpOnly`, `Secure`, `SameSite=Strict` (prefixo `__Host-` em produção), 8 h, revogável no servidor (logout, troca de senha, desativação); código MFA de uso único, 10 min, 5 tentativas, guardado só como HMAC; limite de tentativas por IP, por conta e por código; respostas iguais para conta inexistente; verificação de `Origin` contra CSRF; trilha de auditoria (`audit_log`).
-- **Usuários:** administradores usam a aba **Usuários** (criar, mudar papel, desativar, redefinir senha). Cada ação pede a senha do administrador de novo e derruba as sessões da conta afetada. A senha provisória é mostrada uma única vez. O comando `usuario` continua valendo para emergências.
-- **Não há** "esqueci minha senha": quem esquecer pede a um administrador para redefinir.
+- **Usuários:** administradores usam a aba **Usuários** (criar, mudar papel, desativar, redefinir senha). Cada ação pede a sua senha de novo e derruba as sessões da conta afetada. **Ninguém vê nem envia senha**: ao criar a conta (ou ao redefinir), a pessoa recebe um link por e-mail (vale 24 h, uso único) e define a própria senha em `/definir-senha`; depois entra com senha + código por e-mail. Redefinir invalida a senha atual na hora. O comando `usuario` (senha provisória) fica só para emergências, como perder o acesso de todos os administradores.
+- **Esqueci minha senha:** o login tem o link "Esqueci minha senha", que envia um link de 1 hora ao e-mail cadastrado (resposta igual para e-mails desconhecidos).
 - **Local sem e-mail:** com `npm run dev` e sem SMTP, o código MFA aparece no terminal.
 - Testes: `npm test` (login, MFA, revogação, limites e proteção das rotas, com PGlite em memória).
 

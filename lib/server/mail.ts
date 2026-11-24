@@ -49,3 +49,18 @@ export async function sendMfaEmail(to: string, name: string, code: string) {
   const text = `Olá, ${name}.\n\nSeu código de verificação do Controle de estoque RTT é ${code}.\nEle expira em 10 minutos. Se não foi você, ignore este e-mail.`;
   await deliver(to, subject, text, `[DEV] Código MFA para ${to}: ${code}`);
 }
+
+/** Link de definição de senha: `invite` (conta nova, reenvio ou redefinição pelo administrador, 24 h) ou `reset` (esqueci a senha, 1 h). */
+export async function sendPasswordLinkEmail(to: string, name: string, link: string, kind: "invite" | "reset") {
+  const subject = kind === "invite" ? "Defina sua senha — Controle de estoque RTT" : "Redefinição de senha — Controle de estoque RTT";
+  const intro =
+    kind === "invite"
+      ? "Uma conta foi criada ou liberada para você no Controle de estoque RTT. Para definir a sua senha, abra o link abaixo."
+      : "Recebemos um pedido para redefinir a sua senha no Controle de estoque RTT. Para continuar, abra o link abaixo.";
+  const validity = kind === "invite" ? "24 horas" : "1 hora";
+  const text =
+    `Olá, ${name}.\n\n${intro}\n\n${link}\n\n` +
+    `O link vale por ${validity} e só pode ser usado uma vez. Depois de definir a senha, você entra com o seu e-mail, a senha e um código de verificação enviado a este e-mail.\n\n` +
+    `Se você não esperava esta mensagem, ignore-a: nada será alterado.`;
+  await deliver(to, subject, text, `[DEV] Link de senha para ${to}: ${link}`);
+}

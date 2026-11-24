@@ -38,7 +38,8 @@ Toda a aplicação exige login: **e-mail + senha + código de 6 dígitos enviado
 - **Papéis:** `user` consulta e simula requisições; `admin` também atualiza os dados (Excel e botão do sistema).
 - **Máquinas** (n8n, agendador): continuam usando `ADMIN_TOKEN`/`CRON_SECRET` em cabeçalho, sem sessão.
 - **Segurança:** senhas com bcrypt (custo 12); sessão em cookie `HttpOnly`, `Secure`, `SameSite=Strict` (prefixo `__Host-` em produção), 8 h, revogável no servidor (logout, troca de senha, desativação); código MFA de uso único, 10 min, 5 tentativas, guardado só como HMAC; limite de tentativas por IP, por conta e por código; respostas iguais para conta inexistente; verificação de `Origin` contra CSRF; trilha de auditoria (`audit_log`).
-- **Não há** "esqueci minha senha" nem tela de administração de usuários: o administrador do banco cria e redefine pelo comando `usuario`.
+- **Usuários:** administradores usam a aba **Usuários** (criar, mudar papel, desativar, redefinir senha). Cada ação pede a senha do administrador de novo e derruba as sessões da conta afetada. A senha provisória é mostrada uma única vez. O comando `usuario` continua valendo para emergências.
+- **Não há** "esqueci minha senha": quem esquecer pede a um administrador para redefinir.
 - **Local sem e-mail:** com `npm run dev` e sem SMTP, o código MFA aparece no terminal.
 - Testes: `npm test` (login, MFA, revogação, limites e proteção das rotas, com PGlite em memória).
 

@@ -12,6 +12,7 @@ export function Header() {
   const { ds, status, setPanelOpen } = useApp();
   const { user, logout } = useAuth();
   const req = path.startsWith("/requisicao");
+  const usr = path.startsWith("/usuarios");
   return (
     <header className="top">
       <div className="top-in">
@@ -23,8 +24,9 @@ export function Header() {
           <p>{ds ? "Dados do Protheus extraídos em " + ds.meta.base : "Carregando dados…"}</p>
         </div>
         <nav className="tabs" aria-label="Módulos">
-          <Link href="/" aria-current={!req ? "page" : undefined}>Parâmetros de reposição</Link>
+          <Link href="/" aria-current={!req && !usr ? "page" : undefined}>Parâmetros de reposição</Link>
           <Link href="/requisicao" aria-current={req ? "page" : undefined}>Requisição com saldo na tela</Link>
+          {user.role === "admin" && <Link href="/usuarios" aria-current={usr ? "page" : undefined}>Usuários</Link>}
         </nav>
         <div className="top-right">
           <button className="upd" onClick={() => setPanelOpen(true)} title="Atualizar os dados">

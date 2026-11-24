@@ -6,6 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 process.env.JWT_SECRET = "x".repeat(48);
 process.env.ADMIN_TOKEN = "token-de-maquina-longo-e-aleatorio";
 delete process.env.CRON_SECRET;
+process.env.ALLOWED_EMAIL_DOMAINS = "x.com";
 delete process.env.SMTP_HOST;
 delete process.env.RESEND_API_KEY;
 (process.env as Record<string, string>).NODE_ENV = "test"; // e-mail MFA vai para o console
@@ -20,6 +21,8 @@ const me = await import("../app/api/auth/me/route.ts");
 const change = await import("../app/api/auth/change-password/route.ts");
 const dados = await import("../app/api/dados/route.ts");
 const status = await import("../app/api/status/route.ts");
+const usuarios = await import("../app/api/usuarios/route.ts");
+const usuarioId = await import("../app/api/usuarios/[id]/route.ts");
 
 const db = new PGlite();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -152,4 +155,45 @@ test("usuário desativado perde o acesso na hora", async () => {
   assert.equal((await me.GET(req("GET", "/api/auth/me", undefined, { cookie }))).status, 401);
   const r = await login.POST(req("POST", "/api/auth/login", { email: "user@x.com", password: PASS }, { "x-forwarded-for": newIp() }));
   assert.equal(r.status, 401);
+});
+
+test("gestão de usuários: só admin, com reautenticação, e nada de se auto-rebaixar", async () => {
+  await addUser("gestor@x.com", "admin");
+  await addUser("comum@x.com", "user");
+  const adminCookie = await fullLogin("gestor@x.com");
+  const userCookie = await fullLogin("comum@x.com");
+  const post = (cookie: string, body: unknown) => usuarios.POST(req("POST", "/api/usuarios", body, { cookie }));
+
+  assert.equal((await usuarios.GET(req("GET", "/api/usuarios"))).status, 401);
+  assert.equal((await usuarios.GET(req("GET", "/api/usuarios", undefined, { cookie: userCookie }))).status, 403);
+  assert.equal((await post(userCookie, { name: "X", email: "a@x.com", confirmPassword: PASS })).status, 403);
+
+  const novo = { name: "Fulano", email: "fulano@x.com", role: "user" };
+  assert.equal((await post(adminCookie, novo)).status, 403); // sem confirmar a senha
+  assert.equal((await post(adminCookie, { ...novo, confirmPassword: "senha-errada-123" })).status, 403);
+  assert.equal((await post(adminCookie, { ...novo, email: "fulano@fora.com", confirmPassword: PASS })).status, 400); // domínio não permitido
+  const ok = await post(adminCookie, { ...novo, confirmPassword: PASS });
+  assert.equal(ok.status, 201);
+  const { user, tempPassword } = await ok.json();
+  assert.ok(tempPassword.length >= 16);
+  assert.ok(!JSON.stringify(user).includes("password"));
+  assert.equal((await post(adminCookie, { ...novo, confirmPassword: PASS })).status, 409); // duplicado
+
+  // a conta nova entra com a senha provisória e é obrigada a trocá-la
+  const c = await fullLogin("fulano@x.com", tempPassword);
+  assert.equal((await dados.GET(req("GET", "/api/dados", undefined, { cookie: c }))).status, 403);
+
+  const patch = (id: string, body: unknown) => usuarioId.PATCH(req("PATCH", `/api/usuarios/${id}`, body, { cookie: adminCookie }), { params: Promise.resolve({ id }) });
+  const self = (await db.query("select id from users where email = 'gestor@x.com'")).rows[0] as { id: string };
+  assert.equal((await patch(self.id, { action: "role", role: "user", confirmPassword: PASS })).status, 400);
+  assert.equal((await patch(self.id, { action: "active", active: false, confirmPassword: PASS })).status, 400);
+
+  // desativar derruba a sessão aberta da pessoa
+  assert.equal((await patch(user.id, { action: "active", active: false, confirmPassword: PASS })).status, 200);
+  assert.equal((await me.GET(req("GET", "/api/auth/me", undefined, { cookie: c }))).status, 401);
+  // redefinir reativa, gera outra provisória e exige nova troca
+  const reset = await patch(user.id, { action: "reset", confirmPassword: PASS });
+  assert.equal(reset.status, 200);
+  assert.notEqual((await reset.json()).tempPassword, tempPassword);
+  assert.equal((await patch("nao-e-um-id", { action: "reset", confirmPassword: PASS })).status, 404);
 });

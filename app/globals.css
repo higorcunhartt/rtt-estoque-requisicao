@@ -163,3 +163,6 @@ h3{font:600 18px/1.2 var(--cond);margin:22px 0 8px}
 .authrow{display:flex;justify-content:space-between;gap:8px}
 .who{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink2)}
 .who .btn{padding:5px 10px}
+.userform{display:grid;grid-template-columns:1fr 1fr 1.4fr auto;gap:12px;align-items:end}
+@media (max-width:900px){.userform{grid-template-columns:1fr}}
+code.tmp{font:600 15px ui-monospace,Consolas,monospace;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:2px 8px;user-select:all}

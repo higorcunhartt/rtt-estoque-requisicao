@@ -30,7 +30,7 @@ export async function buildPdf(o: { model: Model; cart: Cart; atts: Att[]; num: 
   const n0 = (v: number | null | undefined) => (v == null ? "-" : nf0.format(v));
   const m = (v: number | null | undefined) => (v == null ? "-" : brl2.format(v));
   const f = cart.f, h = cart.head, items = cart.items, sp = items.filter((z) => z.special);
-  const INK: RGB = [17, 17, 17], RED: RGB = [226, 6, 19], GRN: RGB = [43, 122, 75], GR: RGB = [110, 107, 117], W = 297;
+  const INK: RGB = [17, 17, 17], RED: RGB = [227, 6, 19], GRN: RGB = [43, 122, 75], GR: RGB = [110, 107, 117], W = 297;
   const tot = items.reduce((s, z) => s + z.q * z.preco, 0);
   const excV = sp.reduce((s, z) => s + (z.exc || 0) * z.preco, 0);
   const hl = (k: Parameters<typeof headLabel>[3]) => headLabel(model, cart, f, k);

@@ -1,19 +1,11 @@
 :root{
-  --paper:#ffffff; --wash:#f3f3f6; --wash2:#e9e9ee; --line:#d9d8df; --ink:#111111; --ink2:#55535b; --ink3:#8a8792;
-  --red:#E20613; --red-soft:#fde7e9; --amber:#a86a12; --amber-soft:#fdf1dc; --green:#2b7a4b; --green-soft:#e3f3e9;
-  --blue:#2f5f9e; --blue-soft:#e4ecf8; --gray-soft:#ecebef; --hatch:#b9b7c0;
+  --paper:#ffffff; --wash:#f3f3f3; --wash2:#ececec; --line:#d9d9d9; --ink:#111111; --ink2:#5f5f5f; --ink3:#8a8a8a;
+  --red:#E30613; --red-hover:#b8040f; --red-soft:#fde6e8; --amber:#a86a12; --amber-soft:#fdf1dc; --green:#2b7a4b; --green-soft:#e3f3e9;
+  --blue:#111111; --blue-soft:#ececec; --gray-soft:#ececec; --hatch:#b9b9b9;
   --body:var(--font-barlow),Arial,Helvetica,sans-serif; --cond:var(--font-barlow-cond),"Arial Narrow",Arial,sans-serif;
   color-scheme:light;
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --paper:#1d1b21; --wash:#25232a; --wash2:#2e2c34; --line:#3b3942; --ink:#ecebef; --ink2:#b5b2bc; --ink3:#8c8994;
-  --red:#ff6262; --red-soft:#3d2224; --amber:#e3a547; --amber-soft:#3a2f1c; --green:#5fc48a; --green-soft:#1e3328;
-  --blue:#7aa7e6; --blue-soft:#1f2b3d; --gray-soft:#2c2a31; --hatch:#5d5a64; color-scheme:dark;}}
-:root[data-theme="dark"]{
-  --paper:#1d1b21; --wash:#25232a; --wash2:#2e2c34; --line:#3b3942; --ink:#ecebef; --ink2:#b5b2bc; --ink3:#8c8994;
-  --red:#ff6262; --red-soft:#3d2224; --amber:#e3a547; --amber-soft:#3a2f1c; --green:#5fc48a; --green-soft:#1e3328;
-  --blue:#7aa7e6; --blue-soft:#1f2b3d; --gray-soft:#2c2a31; --hatch:#5d5a64; color-scheme:dark;}
 *,*::before,*::after{box-sizing:border-box}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--wash);color:var(--ink);font:15px/1.45 var(--body);font-variant-numeric:tabular-nums}
@@ -40,7 +32,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .wrap{max-width:1400px;margin:0 auto;padding:20px}
 .view[hidden]{display:none}
 .lede{max-width:72ch;color:var(--ink2);margin:0 0 16px}
-.panel{background:var(--paper);border:1px solid var(--line);border-radius:6px}
+.panel{background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--ink);border-radius:8px}
 .settings{display:flex;flex-wrap:wrap;gap:18px 26px;padding:14px 16px;margin-bottom:16px;align-items:flex-end}
 .fld{display:flex;flex-direction:column;gap:4px;min-width:0}
 .fld>span{font-size:13px;color:var(--ink2)}
@@ -65,7 +57,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .filters .fld.grow{flex:3 1 260px}
 .tablewrap{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:14px}
-th{position:sticky;top:0;background:var(--wash2);text-align:right;font-weight:600;color:var(--ink2);padding:8px 10px;white-space:nowrap;cursor:pointer;user-select:none;border-bottom:1px solid var(--line)}
+th{position:sticky;top:0;background:var(--ink);text-align:right;font-weight:600;color:#fff;padding:8px 10px;white-space:nowrap;cursor:pointer;user-select:none;border-bottom:1px solid var(--line)}
 th.t,td.t{text-align:left}
 td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
 tbody tr{cursor:pointer}
@@ -77,7 +69,7 @@ td .d{display:block;color:var(--ink3);font-size:12.5px;max-width:300px;overflow:
 .pager{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;gap:10px;flex-wrap:wrap}
 .btn{border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:4px;cursor:pointer;font-weight:600}
 .btn.sec{background:var(--paper);color:var(--ink);border-color:var(--line)}
-.btn.red{background:var(--red);border-color:var(--red);color:#fff}
+.btn.red{background:var(--red);border-color:var(--red);color:#fff}.btn.red:hover:not(:disabled){background:var(--red-hover);border-color:var(--red-hover)}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 /* drawer */
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40}
